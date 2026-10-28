@@ -62,9 +62,12 @@ class WitMotion:
         if not found:
             return None
         if self.address:
+            # An explicit address is a pin, not a hint: never silently switch to
+            # a different nearby BLE sensor if the requested device is absent.
             exact = [item for item in found if item[2] == wanted]
             if exact:
                 return exact[0][0]
+            return None
         return found[0][0]
 
     async def _reconnect_loop(self) -> None:
