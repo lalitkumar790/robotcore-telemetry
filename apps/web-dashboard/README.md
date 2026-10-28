@@ -1,28 +1,37 @@
 # Web Dashboard
 
-The current static dashboard is served from this folder via Vercel.
+This static dashboard is served from this folder through Vercel. The laptop bridge is a separate local process; the hosted page never directly reads the laptop's COM port.
 
-## Live functionality
+## Live and field capabilities
 
-- Leaflet / OpenStreetMap map centered on MANIT Bhopal; the map only centers on a live GPS fix after one arrives.
-- Web Serial connection for a user-selected LoRa-E5 receiver on supported secure Chrome/Edge contexts; the browser sends the established AT test-mode/radio configuration and parses LoRa-E5 RX metadata lines.
-- RTPv1 (17-byte GPS) and RTPv2 (35-byte GPS/IMU) decoding with CRC-16/CCITT-FALSE validation.
-- Live RSSI/SNR, sequence-gap/PDR counters, IMU orientation/acceleration/gyroscope charts, and a rotating browser canvas point cloud.
-- Device status for selected serial hardware, RTP frames observed from the transmitter, GPS validity, WT901BLE68 direct BLE, and local recording.
-- IndexedDB laptop-side recording and CSV download.
-- Paired Pi .rcm + receiver CSV analysis, received/not-received sample map, distance-binned PDR comparison, optional Route B, and CSV export.
+- Leaflet / OpenStreetMap base centered on the established MANIT campus reference point; actual GPS fixes move the view to observed locations.
+- Direct receiver mode: user-selected LoRa-E5 USB serial port through Web Serial on secure Chrome/Edge. Only one application can own the radio COM/TTY port at a time.
+- Remote phone mode: authenticated, read-only WebSocket to the laptop receiver bridge through a temporary HTTPS tunnel. Paste the tunnel origin and per-run token in Device status.
+- RTPv1 (17-byte GPS) and RTPv2 (35-byte GPS/IMU) decoding with CRC-16/CCITT-FALSE validation in direct browser mode.
+- Link charts for RSSI/SNR, live sequence-gap/PDR counters, orientation/acceleration/gyroscope charts and a rotating browser-canvas 3D point cloud.
+- Device status separates browser support, serial port open, radio configuration response, valid RTP telemetry, GPS fixes, direct WT901BLE68 BLE connection, and local/remote capture status.
+- Local IndexedDB capture and receiver CSV export.
+- Dual-ended merge of Pi .rcm mission, laptop receiver CSV and optional Pi .events.jsonl sidecar. It marks not-received sample locations at Pi-recorded coordinates and classifies Pi TX outcomes where sidecar events provide evidence.
+- Optional second route pair, PDR by distance segment, TX failure counts, route comparison and loss-map CSV export.
 
-## Permissions and runtime requirements
+## Start the phone-to-laptop bridge
 
-- Use HTTPS and a current Chrome/Edge browser for Web Serial and Web Bluetooth. The user must explicitly select a USB port or Bluetooth device in the browser permission chooser.
-- A serial radio port can be owned by only one process at a time. Stop the desktop receiver application before opening that same COM/TTY port in this page.
-- The page does not silently enumerate unapproved devices and does not upload selected CSV or mission files.
-- OpenStreetMap base tiles require an internet connection. Live telemetry, IndexedDB recording and file analysis run in the browser.
+Follow [the field collection runbook](../../docs/field-collection-runbook.md). The short form is:
 
-## Truthful measurement semantics
+1. Start the receiver bridge from hardware/laptop-receiver with the experiment ID used by the Pi.
+2. Keep the bridge bound to localhost and start cloudflared Quick Tunnel to http://127.0.0.1:8765 in another terminal.
+3. Open this hosted dashboard on the phone, choose Device status, and enter the temporary HTTPS tunnel origin and token printed by the laptop bridge.
+4. Leave the laptop bridge and tunnel processes running during the field walk. The laptop continues writing its receiver CSV even if the phone disconnects.
 
-- The live route line breaks on missing/out-of-order packet sequences.
-- RTPv2 has no per-sample timestamp or altitude field; PC receive time is not a measurement time, and the 3D cloud's vertical axis is sample progression rather than terrain height.
-- The Pi .rcm is the transmitter's sample record; the receiver CSV is the observed subset. A sample absent from the receiver log is classified not received, but may represent RF loss, TX command failure, receiver outage, or mismatched logs. The current mission format does not persist a per-sequence transmit result.
+The origin allow-list is intentionally narrow. Use the production dashboard origin by default. The Quick Tunnel URL changes when restarted; it is intended for temporary field testing rather than permanent hosting.
 
-See [dual-ended capture](../../docs/dual-ended-capture.md) for the full workflow and analysis caveats.
+## Permissions, privacy and measurement semantics
+
+- Web Serial/Bluetooth require browser permissions; devices cannot be silently enumerated.
+- Selected mission, CSV and JSONL files are parsed locally in the page. The dashboard does not upload them to a backend.
+- Keep raw GPS tracks, mission files and receiver logs private; do not commit them to the repository.
+- A missing receiver sequence means end-to-end not-received, not automatically RF propagation loss. A sidecar TX error can identify a local transmit failure. Modem TX DONE is not a receiver acknowledgement.
+- RTPv2 has no measurement timestamp, altitude or IMU-present bit. PC receive time is not sensor acquisition time; the point cloud's vertical axis is sample progression rather than terrain height. Embedded IMU values are unverified unless direct BLE connection on the Pi/phone has been established.
+- Compare runs only when radio parameters and test conditions are comparable.
+
+See [dual-ended capture](../../docs/dual-ended-capture.md) and [the field collection runbook](../../docs/field-collection-runbook.md) for data formats and operating steps.
