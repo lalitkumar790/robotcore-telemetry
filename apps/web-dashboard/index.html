@@ -111,7 +111,7 @@ a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}butto
     <div class="sumcard"><span>Route A PDR</span><strong id="pdrA">—</strong></div><div class="sumcard"><span>Route A missing</span><strong id="lostA">—</strong></div><div class="sumcard"><span>Route B PDR</span><strong id="pdrB">—</strong></div><div class="sumcard"><span>Route B missing</span><strong id="lostB">—</strong></div>
   </div>
   <div class="mapnote" id="comparisonVerdict"><strong>How this identifies the better route:</strong> every Pi mission sequence is compared with the receiver log. Missing sequences are mapped at their transmitter GPS positions, then link delivery is summarized in distance-based bins. A route comparison is valid only when the files come from matching transmitter/receiver sessions and comparable radio settings.</div>
-  <div class="tablewrap"><table><thead><tr><th>Distance from start</th><th>Route A samples</th><th>Route A PDR</th><th>Route B samples</th><th>Route B PDR</th><th>Better in segment</th></tr></thead><tbody id="segmentRows"><tr><td colspan="6" class="muted">No comparison computed yet.</td></tr></tbody></table></div>
+  <div class="tablewrap"><table><thead><tr><th>Distance from start</th><th>Route A samples</th><th>Route A PDR</th><th>Route A TX fails</th><th>Route B samples</th><th>Route B PDR</th><th>Route B TX fails</th><th>Better in segment</th></tr></thead><tbody id="segmentRows"><tr><td colspan="8" class="muted">No comparison computed yet.</td></tr></tbody></table></div>
 </section>
 <section class="panel section">
   <div class="panelhead"><div><h3>Research pipeline</h3><div class="subhead">The order of work protects reproducibility and prevents receiver gaps from being mistaken for a continuous path.</div></div></div>
