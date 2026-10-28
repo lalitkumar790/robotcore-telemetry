@@ -292,58 +292,76 @@ class ReceiverWorker(threading.Thread):
 
     def run(self) -> None:
         self._prepare_log()
-        try:
-            self.serial_port = serial.Serial(self.port_name, baudrate=9600, timeout=0.25, write_timeout=2.0)
-            with self.lock:
-                self.serial_connected = True
-                self.last_error = None
-            self._status_changed()
-            self._configure_radio()
-            pending_buffer = ""
-            while not self.stop_event.is_set():
-                raw = self.serial_port.readline()
-                if not raw:
-                    continue
-                line = raw.decode("ascii", errors="ignore").strip()
-                if not line:
-                    continue
-                match = RX_META_RE.search(line)
-                if match:
-                    self._pending_rssi = int(match.group(1))
-                    self._pending_snr = int(match.group(2))
-                    continue
-                if "RX" in line.upper() and '"' in line:
-                    try:
-                        hex_payload = line.split('"', 2)[1].strip()
-                        payload = bytes.fromhex(hex_payload)
-                    except (IndexError, ValueError):
-                        with self.lock:
-                            self.packets_corrupt += 1
-                            self.last_error = "Malformed LoRa-E5 RX payload line"
-                        self._status_changed()
+        # Keep the bridge alive and the CSV open if the USB radio is briefly
+        # unplugged or Windows resets the COM port. The phone can continue
+        # observing status while the receiver retries every two seconds.
+        while not self.stop_event.is_set():
+            try:
+                self.serial_port = serial.Serial(
+                    self.port_name, baudrate=9600, timeout=0.25, write_timeout=2.0
+                )
+                self._pending_rssi = None
+                self._pending_snr = None
+                with self.lock:
+                    self.serial_connected = True
+                    self.radio_configured = False
+                    self.last_error = None
+                self._status_changed()
+                self._configure_radio()
+                while not self.stop_event.is_set():
+                    raw = self.serial_port.readline()
+                    if not raw:
                         continue
-                    self._process_packet(payload)
-        except Exception as error:
-            with self.lock:
-                self.last_error = f"{type(error).__name__}: {error}"
-                self.serial_connected = False
-            print("[RX] Fatal receiver error:", self.last_error, flush=True)
-            self._status_changed()
-        finally:
-            with self.lock:
-                self.serial_connected = False
-            try:
-                if self.serial_port is not None:
-                    self.serial_port.close()
-            except Exception:
-                pass
-            try:
-                if self._csv_file is not None:
-                    self._csv_file.flush()
-                    self._csv_file.close()
-            except Exception:
-                pass
-            self._status_changed()
+                    line = raw.decode("ascii", errors="ignore").strip()
+                    if not line:
+                        continue
+                    match = RX_META_RE.search(line)
+                    if match:
+                        self._pending_rssi = int(match.group(1))
+                        self._pending_snr = int(match.group(2))
+                        continue
+                    if "RX" in line.upper() and '"' in line:
+                        try:
+                            hex_payload = line.split('"', 2)[1].strip()
+                            payload = bytes.fromhex(hex_payload)
+                        except (IndexError, ValueError):
+                            with self.lock:
+                                self.packets_corrupt += 1
+                                self.last_error = "Malformed LoRa-E5 RX payload line"
+                            self._status_changed()
+                            continue
+                        self._process_packet(payload)
+            except Exception as error:
+                with self.lock:
+                    self.last_error = f"{type(error).__name__}: {error}"
+                    self.serial_connected = False
+                    self.radio_configured = False
+                if not self.stop_event.is_set():
+                    print("[RX] Receiver error; retrying in 2 seconds:", self.last_error, flush=True)
+                self._status_changed()
+            finally:
+                with self.lock:
+                    self.serial_connected = False
+                    self.radio_configured = False
+                try:
+                    if self.serial_port is not None:
+                        self.serial_port.close()
+                except Exception:
+                    pass
+                self.serial_port = None
+                self._pending_rssi = None
+                self._pending_snr = None
+                self._status_changed()
+            if not self.stop_event.is_set():
+                self.stop_event.wait(2.0)
+
+        try:
+            if self._csv_file is not None:
+                self._csv_file.flush()
+                self._csv_file.close()
+        except Exception:
+            pass
+        self._status_changed()
 
     def stop(self) -> None:
         self.stop_event.set()
