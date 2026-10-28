@@ -89,18 +89,20 @@ a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}butto
   </article>
 </section>
 <section class="panel section">
-  <div class="panelhead"><div><h3>Dual-ended capture · compare where packets were lost</h3><div class="subhead">The Pi mission is the sent-sample ground truth; the laptop CSV is what the receiver actually heard. Sequence alignment reconstructs the map of received and missing samples.</div></div><span class="tag">Offline comparison</span></div>
+  <div class="panelhead"><div><h3>Dual-ended capture · compare where packets were lost</h3><div class="subhead">The Pi mission is the sent-sample ground truth; the laptop CSV is what the receiver actually heard. Sequence alignment reconstructs received/missing positions; the optional Pi event sidecar helps distinguish TX failure from unknown non-reception.</div></div><span class="tag">Offline comparison</span></div>
   <div class="grid comparison-grid">
     <div class="routebox">
       <div class="routehead"><div><h4><span style="color:#65e0d4">●</span> Route A / experiment A</h4><p>Use one Pi mission file and the matching receiver log.</p></div><span class="pill">Pair A</span></div>
       <div class="filefield"><label for="missionA">Pi transmitter mission (.rcm)</label><input id="missionA" type="file" accept=".rcm,.bin,application/octet-stream"></div>
       <div class="filefield"><label for="receiverA">Laptop receiver log (CSV)</label><input id="receiverA" type="file" accept=".csv,text/csv"></div>
+      <div class="filefield"><label for="eventsA">Pi event sidecar (optional .events.jsonl)</label><input id="eventsA" type="file" accept=".jsonl,.ndjson,.txt,application/x-ndjson"></div>
       <div class="status" id="routeAStatus">No Route A files selected.</div>
     </div>
     <div class="routebox">
       <div class="routehead"><div><h4><span style="color:#80b9ff">●</span> Route B / experiment B</h4><p>Optional second route. Compare by distance from route start.</p></div><span class="pill">Pair B</span></div>
       <div class="filefield"><label for="missionB">Pi transmitter mission (.rcm)</label><input id="missionB" type="file" accept=".rcm,.bin,application/octet-stream"></div>
       <div class="filefield"><label for="receiverB">Laptop receiver log (CSV)</label><input id="receiverB" type="file" accept=".csv,text/csv"></div>
+      <div class="filefield"><label for="eventsB">Pi event sidecar (optional .events.jsonl)</label><input id="eventsB" type="file" accept=".jsonl,.ndjson,.txt,application/x-ndjson"></div>
       <div class="status" id="routeBStatus">No Route B files selected.</div>
     </div>
   </div>
