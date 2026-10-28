@@ -4,7 +4,7 @@ const MANIT={lat:23.213622,lon:77.408091,zoom:17},$=id=>document.getElementById(
 const S={
  map:null,liveLayer:null,compareLayer:null,liveMapLayers:[],liveRecords:[],chartHistory:[],lastSeq:null,received:0,lost:0,corrupt:0,duplicates:0,
  lastPacketAt:0,lastGpsAt:0,lastGps:null,latest:null,latestImu:null,imuSource:null,imuHistory:[],lastLiveMapRecord:null,
- lora:{port:null,reader:null,readDone:null,running:false,connected:false,verified:false,rssi:null,snr:null,info:""},remote:{ws:null,connected:false,authenticated:false,url:"",token:"",lastMessageAt:0,lastTelemetryAt:0,serverStatus:null},protocolOk:null,
+ lora:{port:null,reader:null,readDone:null,running:false,connected:false,verified:false,rssi:null,snr:null,info:""},remote:{ws:null,connected:false,authenticated:false,wanted:false,url:"",token:"",lastMessageAt:0,lastTelemetryAt:0,serverStatus:null,reconnectTimer:null,retryMs:2000},protocolOk:null,
  imuDevice:null,imuCharacteristic:null,bleConnected:false,
  recording:false,sessionId:null,sessionRecords:[],storedCount:0,chartMode:"link",follow:false,firstFix:true,
  routeA:null,routeB:null,cloud:[],yaw:-.68,pitch:.56,scale:1,drag:null,toastTimer:null
@@ -68,25 +68,39 @@ function acceptPacket(r, remoteSource){
  if(r.imuPresent&&!S.bleConnected){S.latestImu=r;S.imuSource=remoteSource?"Remote RTPv2 fields (sensor health unverified)":"RTPv2 fields (sensor health unverified)";S.imuHistory.push(r);if(S.imuHistory.length>400)S.imuHistory.shift();}
  mapLivePoint(r);if(S.recording)persistRecord(r);updateMetrics();updateReadings();updateImu();drawChart();updateCloud();drawCloud();renderStatus();
 }
-function setRemoteBridgeUi(message,kind){const e=$("remoteBridgeStatus");if(e){e.textContent=message;e.classList.toggle("connected",kind==="ok");e.classList.toggle("error",kind==="error");}const a=$("connectRemoteBtn"),b=$("disconnectRemoteBtn");if(a)a.disabled=!!S.remote.connected;if(b)b.disabled=!S.remote.connected&&!(S.remote.ws&&S.remote.ws.readyState===WebSocket.CONNECTING);}
+function setRemoteBridgeUi(message,kind){const e=$("remoteBridgeStatus");if(e){e.textContent=message;e.classList.toggle("connected",kind==="ok");e.classList.toggle("error",kind==="error");}const a=$("connectRemoteBtn"),b=$("disconnectRemoteBtn"),pending=!!(S.remote.ws&&(S.remote.ws.readyState===WebSocket.CONNECTING||S.remote.ws.readyState===WebSocket.OPEN));if(a)a.disabled=pending;if(b)b.disabled=!pending;}
 function connectRemoteBridge(){
  if(S.lora.connected){toast("Disconnect the direct USB receiver before using the remote laptop feed.",true);return;}
  const raw=$("remoteBridgeUrl").value.trim(),token=$("remoteBridgeToken").value.trim();if(!raw||!token){setRemoteBridgeUi("Enter the tunnel URL and token from the laptop console.","error");return;}
  let url;try{url=new URL(raw);}catch(_){setRemoteBridgeUi("Tunnel URL is not valid.","error");return;}
  if(url.protocol!=="https:"||url.username||url.password||url.search||url.hash||!(url.pathname==="/"||url.pathname==="")){setRemoteBridgeUi("Use the HTTPS origin only, e.g. https://name.trycloudflare.com","error");return;}
  if(S.remote.ws)try{S.remote.ws.close(1000,"replacing connection");}catch(_){}
- S.remote.url=url.origin;S.remote.token=token;S.remote.connected=false;S.remote.authenticated=false;S.remote.serverStatus=null;
+ S.remote.url=url.origin;S.remote.token=token;S.remote.wanted=true;S.remote.connected=false;S.remote.authenticated=false;S.remote.serverStatus=null;if(S.remote.reconnectTimer){clearTimeout(S.remote.reconnectTimer);S.remote.reconnectTimer=null;}
  let ws;try{ws=new WebSocket("wss://"+url.host+"/ws");}catch(e){setRemoteBridgeUi("WebSocket failed: "+e.message,"error");return;}S.remote.ws=ws;setRemoteBridgeUi("Connecting to laptop receiver…");renderStatus();
- ws.onopen=()=>{try{ws.send(JSON.stringify({type:"auth",token:S.remote.token}));setRemoteBridgeUi("Authenticating with laptop bridge…");}catch(_){setRemoteBridgeUi("Could not send authentication.","error");}};
+ ws.onopen=()=>{S.remote.retryMs=2000;try{ws.send(JSON.stringify({type:"auth",token:S.remote.token}));setRemoteBridgeUi("Authenticating with laptop bridge…");}catch(_){setRemoteBridgeUi("Could not send authentication.","error");}};
  ws.onmessage=event=>{let m;try{m=JSON.parse(event.data);}catch(_){return;}S.remote.lastMessageAt=Date.now();
   if(m.type==="auth_ok"){S.remote.authenticated=true;S.remote.connected=true;setRemoteBridgeUi("Authenticated · waiting for packets…","ok");updateMetrics();renderStatus();return;}
   if(m.type==="status"){S.remote.serverStatus=m.data||null;if(m.data&&m.data.serial_connected&&m.data.radio_configured)setRemoteBridgeUi("Authenticated · receiver/radio configured","ok");renderStatus();updateMetrics();return;}
   if(m.type==="telemetry"&&m.record&&S.remote.authenticated){const r=m.record;if(r.sequence==null)return;r.receivedAt=Number(r.receivedAt)||Date.now();r.imuPresent=!!r.imuPresent;r.protocol=r.protocol||"RTPv2";acceptPacket(r,true);setRemoteBridgeUi("Receiving · "+S.received.toLocaleString()+" laptop packets","ok");}
  };
  ws.onerror=()=>{if(S.remote.ws===ws)setRemoteBridgeUi("WebSocket error · check tunnel URL/token and keep the laptop processes running.","error");};
- ws.onclose=event=>{if(S.remote.ws!==ws)return;S.remote.ws=null;S.remote.connected=false;S.remote.authenticated=false;const why=event.code===4401?"Token rejected":event.code===4403?"Origin rejected":event.code===4408?"Authentication timed out":"Disconnected";setRemoteBridgeUi(why+" · laptop CSV logging continues",event.code===1000?"":"error");updateMetrics();renderStatus();};
+ ws.onclose=event=>{
+  if(S.remote.ws!==ws)return;
+  S.remote.ws=null;S.remote.connected=false;S.remote.authenticated=false;
+  const authFailure=event.code===4401||event.code===4403||event.code===4408;
+  const why=event.code===4401?"Token rejected":event.code===4403?"Origin rejected":event.code===4408?"Authentication timed out":"Connection dropped";
+  if(authFailure)S.remote.wanted=false;
+  if(S.remote.wanted&&!authFailure){
+   setRemoteBridgeUi(why+" · retrying automatically; laptop continues logging", "error");
+   const delay=S.remote.retryMs;S.remote.retryMs=Math.min(30000,Math.round(S.remote.retryMs*1.7));
+   S.remote.reconnectTimer=setTimeout(()=>{S.remote.reconnectTimer=null;if(S.remote.wanted&&!S.lora.connected)connectRemoteBridge();},delay);
+  }else{
+   setRemoteBridgeUi(why+" · laptop CSV logging continues",event.code===1000?"":"error");
+  }
+  updateMetrics();renderStatus();
+ };
 }
-function disconnectRemoteBridge(){const ws=S.remote.ws;S.remote.ws=null;S.remote.connected=false;S.remote.authenticated=false;S.remote.token="";if(ws)try{ws.close(1000,"user disconnected");}catch(_){}setRemoteBridgeUi("Disconnected · laptop logging continues locally");updateMetrics();renderStatus();}
+function disconnectRemoteBridge(){S.remote.wanted=false;if(S.remote.reconnectTimer){clearTimeout(S.remote.reconnectTimer);S.remote.reconnectTimer=null;}const ws=S.remote.ws;S.remote.ws=null;S.remote.connected=false;S.remote.authenticated=false;S.remote.token="";if(ws)try{ws.close(1000,"user disconnected");}catch(_){}setRemoteBridgeUi("Disconnected · laptop logging continues locally");updateMetrics();renderStatus();}
 function delay(ms){return new Promise(r=>setTimeout(r,ms));}
 async function serialWrite(port,command){const w=port.writable.getWriter();try{await w.write(new TextEncoder().encode(command+"\r\n"));}finally{w.releaseLock();}}
 async function connectLora(){if(S.remote.connected){toast("Disconnect the remote laptop feed before selecting a direct USB receiver.",true);return;}if(!navigator.serial){toast("Web Serial requires a recent Chrome/Edge browser over HTTPS.",true);return;}if(S.lora.connected)return;let port;try{port=await navigator.serial.requestPort();await port.open({baudRate:9600,bufferSize:4096});const inf=port.getInfo?port.getInfo():{},ids=(inf.usbVendorId!=null?" VID 0x"+inf.usbVendorId.toString(16).padStart(4,"0"):"")+(inf.usbProductId!=null?" PID 0x"+inf.usbProductId.toString(16).padStart(4,"0"):"");S.lora.port=port;S.lora.connected=true;S.lora.running=true;S.lora.verified=false;S.lora.info="User-selected USB serial port"+(ids||" · USB IDs unavailable")+" · waiting for LoRa-E5 response";S.lora.readDone=readSerial(port);await serialWrite(port,"AT+MODE=TEST");await delay(350);await serialWrite(port,"AT+TEST=RFCFG,865,SF7,125,12,15,14,ON,OFF,OFF");await delay(500);await serialWrite(port,"AT+TEST=RXLRPKT");$("liveStatePill").textContent="Listening";toast("LoRa-E5 RX configured · 865 MHz / SF7 / BW125K · waiting for valid RTP frames.");renderStatus();}catch(e){if(port)try{await port.close();}catch(_){}S.lora.port=null;S.lora.connected=false;S.lora.running=false;S.lora.verified=false;renderStatus();toast("Could not open selected serial port: "+e.message,true);}}
