@@ -20,7 +20,7 @@ From this folder:
     python device_check.py
     python runner.py
 
-The first GPS fix can take time outdoors. The terminal states that it is waiting; it does not silently transmit a fake location. Once running, a GPS timeout is written to the event sidecar and the loop continues. Local mission logging happens before every radio transmission attempt.
+The transmitter performs an IMU startup preflight before creating mission files or sending packets. By default it waits up to 90 seconds for a fresh decoded WT901BLE68 reading; if none arrives, it exits instead of starting a mission with zero-valued IMU fields. Adjust this limit with `--imu-startup-timeout 120`. After startup, the sidecar continues to mark any later IMU disconnect or stale reading explicitly. The first GPS fix can take time outdoors. The terminal states that it is waiting; it does not silently transmit a fake location. Once running, a GPS timeout is written to the event sidecar and the loop continues. Local mission logging happens before every radio transmission attempt.
 
 ## Device overrides
 
