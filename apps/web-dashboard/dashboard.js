@@ -26,8 +26,9 @@ function mapLivePoint(r){
  const prev=S.lastLiveMapRecord,c=rssiColor(r.rssi);
  const point=L.circleMarker([r.latitude,r.longitude],{radius:5,color:c,fillColor:c,fillOpacity:.92,weight:1.5}).bindPopup('<b>Received LoRa sample</b><br>Sequence: '+esc(r.sequence)+'<br>RSSI: '+esc(r.rssi==null?"n/a":r.rssi+" dBm")+'<br>SNR: '+esc(r.snr==null?"n/a":r.snr+" dB")+'<br>GPS: '+r.latitude.toFixed(6)+", "+r.longitude.toFixed(6)+'<br><small>Receiver time: '+esc(new Date(r.receivedAt).toISOString())+'</small>').addTo(S.liveLayer);S.liveMapLayers.push(point);
  // Never draw across a lost/out-of-order packet. The missing GPS positions are only recovered from the Pi mission below.
- if(prev&&prev.source==="lora-rx"&&r.inOrder===true&&prev.sequence!=null&&r.sequence!=null&&gapInfo(prev.sequence,r.sequence).delta===1&&validGps(prev.latitude,prev.longitude)&&dist(prev,r)<250)
+ if(prev&&prev.source==="lora-rx"&&r.inOrder===true&&prev.sequence!=null&&r.sequence!=null&&gapInfo(prev.sequence,r.sequence).delta===1&&validGps(prev.latitude,prev.longitude)&&dist(prev,r)<250){
   const segment=L.polyline([[prev.latitude,prev.longitude],[r.latitude,r.longitude]],{color:rssiColor((prev.rssi+r.rssi)/2),weight:3,opacity:.75}).addTo(S.liveLayer);S.liveMapLayers.push(segment);
+}
  if(S.firstFix){S.map.setView([r.latitude,r.longitude],Math.max(17,S.map.getZoom()));S.firstFix=false;}else if(S.follow)S.map.panTo([r.latitude,r.longitude],{animate:false});
  $("mapOverlayLabel").textContent="GPS "+r.latitude.toFixed(6)+", "+r.longitude.toFixed(6)+" · sequence "+r.sequence;
  $("mapStatus").textContent=S.received+" received records · gaps are not connected";S.lastLiveMapRecord=r;while(S.liveMapLayers.length>2400){const old=S.liveMapLayers.shift();if(S.liveLayer)S.liveLayer.removeLayer(old);}
