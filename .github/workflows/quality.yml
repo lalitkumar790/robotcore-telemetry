@@ -27,3 +27,5 @@ jobs:
           Path("/tmp/robotcore-import.js").write_text("\n".join(scripts), encoding="utf-8")
           PY
           node --check /tmp/robotcore-import.js
+      - name: Validate live dashboard JavaScript syntax
+        run: node --check apps/web-dashboard/dashboard.js
