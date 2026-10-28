@@ -5,4 +5,4 @@ cd "$SCRIPT_DIR"
 if [[ -x "$SCRIPT_DIR/.venv/bin/python" ]]; then
   exec "$SCRIPT_DIR/.venv/bin/python" "$SCRIPT_DIR/runner.py" "$@"
 fi
-exec python3 "$SCRIPT_DIR/runner.py" "$@
+exec python3 "$SCRIPT_DIR/runner.py" "$@"
