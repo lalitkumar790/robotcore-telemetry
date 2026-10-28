@@ -1,0 +1,35 @@
+# Python and build artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Credentials and local logs
+*.log
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Raw telemetry may contain precise location data
+# Keep reviewed/sanitized samples under data/samples instead.
+data/raw/**
+!data/raw/README.md
+hardware/**/missions/
+hardware/**/logs/
+
+# Desktop and web build output
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+dist/
+build/
+node_modules/
+.vercel/
