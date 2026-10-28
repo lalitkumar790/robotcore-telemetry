@@ -16,3 +16,14 @@ jobs:
         run: python -m json.tool schemas/telemetry-record.schema.json > /dev/null
       - name: Validate experiment manifest JSON
         run: python -m json.tool data/manifests/experiment.example.json > /dev/null
+      - name: Validate dashboard JavaScript syntax
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          html = Path("apps/web-dashboard/import.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.S)
+          assert scripts, "No inline script found in CSV inspector"
+          Path("/tmp/robotcore-import.js").write_text("\n".join(scripts), encoding="utf-8")
+          PY
+          node --check /tmp/robotcore-import.js
