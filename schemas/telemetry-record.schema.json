@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/lalitkumar790/robotcore-telemetry/blob/main/schemas/telemetry-record.schema.json",
+  "title": "RobotCore Telemetry Record",
+  "description": "Normalized research record. Null indicates unknown/unavailable and must not be silently coerced to zero.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "experiment_id",
+    "session_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "experiment_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sequence": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "measurement_time": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "transmit_time": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "receive_time": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "latitude": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": -90,
+      "maximum": 90
+    },
+    "longitude": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": -180,
+      "maximum": 180
+    },
+    "gps_fix_quality": {
+      "type": [
+        "string",
+        "integer",
+        "null"
+      ]
+    },
+    "speed_mps": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "heading_deg": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "exclusiveMaximum": 360
+    },
+    "roll_deg": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": -180,
+      "maximum": 180
+    },
+    "pitch_deg": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": -90,
+      "maximum": 90
+    },
+    "rssi_dbm": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "snr_db": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "crc_ok": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "decode_ok": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "radio_config_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_file": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_row": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "quality_flags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    }
+  },
+  "additionalProperties": false
+}
