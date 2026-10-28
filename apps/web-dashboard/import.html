@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b1018">
+<title>CSV Inspector — RobotCore Telemetry</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1018;--panel:#111a27;--line:#263448;--text:#ecf3fc;--muted:#91a3b9;--cyan:#65e0d4;--blue:#80b9ff;--orange:#f8bd70;--red:#ff8e9b;--radius:14px}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 14% -10%,#192b40 0,transparent 40%),var(--bg);color:var(--text);font:14px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}.shell{max-width:1440px;margin:auto;padding:24px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;padding-bottom:20px;border-bottom:1px solid var(--line)}.brand{display:flex;align-items:center;gap:12px}.logo{width:40px;height:40px;display:grid;place-items:center;border:1px solid #3c6688;border-radius:12px;background:#162a3d;color:var(--cyan);font-size:21px}.eyebrow{font-size:11px;color:var(--cyan);letter-spacing:.14em;text-transform:uppercase;font-weight:700}.brand h1{font-size:18px;margin:1px 0 0}.toplinks{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.pill{display:inline-block;border:1px solid var(--line);border-radius:99px;padding:6px 10px;font-size:12px;color:var(--muted)}.intro{padding:28px 0 20px}.intro h2{font-size:clamp(26px,4vw,36px);letter-spacing:-.04em;line-height:1.15;margin:7px 0 10px}.intro p{color:var(--muted);max-width:820px;margin:0}.privacy{display:flex;gap:10px;align-items:flex-start;padding:13px 15px;border:1px solid #2c625d;background:#102522;border-radius:11px;color:#b5dcd7;font-size:12px;margin-bottom:16px}.privacy b{color:var(--cyan)}.upload{background:linear-gradient(165deg,#152234,#101824);border:1px solid var(--line);border-radius:var(--radius);padding:20px}.uploadrow{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.upload h3,.panel h3{font-size:15px;margin:0}.hint{font-size:12px;color:var(--muted);margin-top:5px}.controls{display:flex;gap:9px;flex-wrap:wrap;align-items:center}button,.filelabel{appearance:none;border:1px solid #355b72;border-radius:9px;background:#183047;color:var(--text);padding:9px 13px;font:600 12px inherit;cursor:pointer}button:hover,.filelabel:hover{border-color:var(--cyan);background:#203d54}button:disabled{opacity:.45;cursor:not-allowed}button.secondary{border-color:var(--line);background:#131e2c;color:var(--muted)}input[type=file]{max-width:100%;color:var(--muted);font-size:12px}.metrics{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:11px;margin:14px 0}.metric,.panel{background:linear-gradient(165deg,rgba(22,34,50,.96),rgba(14,22,33,.96));border:1px solid var(--line);border-radius:var(--radius);min-width:0}.metric{padding:14px}.metric span{display:block;font-size:11px;color:var(--muted)}.metric strong{display:block;font-size:22px;letter-spacing:-.03em;margin:7px 0 2px;overflow-wrap:anywhere}.metric small{font-size:10px;color:var(--muted)}.grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:14px}.panel{padding:18px}.panelhead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px}.panelhead p{color:var(--muted);font-size:12px;margin:4px 0 0}.chart,.map{width:100%;height:285px;display:block;border:1px solid #263a4e;border-radius:10px;background:#0c1621}.chart text{fill:#8ea3b9;font-size:10px}.empty{height:285px;display:grid;place-items:center;text-align:center;border:1px dashed #34485c;border-radius:10px;padding:22px;color:var(--muted)}.empty b{display:block;color:var(--text);margin-bottom:5px}.legend{font-size:11px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap;margin-top:10px}.swatch{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}.tablepanel{margin-top:14px}.tablewrap{overflow:auto}table{width:100%;border-collapse:collapse;text-align:left;min-width:650px;font-size:12px}th{color:var(--muted);font-weight:600}th,td{padding:10px 9px;border-bottom:1px solid #243245}tr:last-child td{border-bottom:0}td{max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.status{font-size:11px;color:var(--muted)}.error{margin-top:12px;padding:10px 12px;border:1px solid #693d48;background:#291820;color:#ffbdc5;border-radius:9px;font-size:12px;display:none}.footer{margin-top:22px;border-top:1px solid var(--line);padding-top:16px;color:var(--muted);font-size:11px;display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap}
+@media(max-width:1080px){.metrics{grid-template-columns:repeat(3,minmax(0,1fr))}.grid{grid-template-columns:1fr}}@media(max-width:600px){.shell{padding:14px}.top{align-items:flex-start;flex-direction:column}.metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.metric{padding:11px}.metric strong{font-size:19px}.panel,.upload{padding:13px}.chart,.map,.empty{height:240px}}
+</style>
+</head>
+<body>
+<div class="shell">
+<header class="top">
+  <div class="brand"><div class="logo" aria-hidden="true">⌁</div><div><div class="eyebrow">RobotCore Telemetry</div><h1>Local CSV Inspector</h1></div></div>
+  <div class="toplinks"><a class="pill" href="/">← Research console</a><a class="pill" href="https://github.com/lalitkumar790/robotcore-telemetry">GitHub repository ↗</a></div>
+</header>
+<section class="intro"><div class="eyebrow">Offline-first data quality</div><h2>Inspect field logs before training a model.</h2><p>Load a CSV from your device to visualize measured coordinate tracks, RSSI/SNR, timestamps, and basic data quality. The file is parsed locally in this browser; no upload, server request, or account is required.</p></section>
+<div class="privacy"><span>◈</span><div><b>Local processing:</b> the selected file stays in this browser tab. Do not share screenshots or exported files with precise coordinates unless you intend to disclose the location data. This inspector does not replace the formal validation pipeline.</div></div>
+<section class="upload">
+ <div class="uploadrow"><div><h3>Choose a telemetry CSV</h3><div class="hint">Supports the legacy columns such as PC Timestamp, Sequence, Latitude, Longitude, Speed (km/h), RSSI (dBm), and SNR (dB).</div></div>
+ <div class="controls"><input type="file" id="csvFile" accept=".csv,text/csv"><button id="exportBtn" disabled>Export normalized JSON</button><button class="secondary" id="clearBtn" disabled>Clear</button></div></div>
+ <div class="error" id="error" role="alert"></div><div class="hint" id="fileStatus" aria-live="polite">No file loaded. Import a CSV to start.</div>
+</section>
+<section class="metrics" aria-label="CSV summary">
+ <article class="metric"><span>Rows read</span><strong id="rowsMetric">—</strong><small>excluding header</small></article>
+ <article class="metric"><span>Valid GPS fixes</span><strong id="gpsMetric">—</strong><small>valid coordinate pairs</small></article>
+ <article class="metric"><span>RSSI observations</span><strong id="rssiMetric">—</strong><small>numeric values</small></article>
+ <article class="metric"><span>Mean RSSI</span><strong id="meanRssi">—</strong><small>dBm, when available</small></article>
+ <article class="metric"><span>Mean SNR</span><strong id="meanSnr">—</strong><small>dB, when available</small></article>
+ <article class="metric"><span>Missing coordinates</span><strong id="missingGps">—</strong><small>rows without valid GPS pair</small></article>
+</section>
+<section class="grid">
+ <article class="panel"><div class="panelhead"><div><h3>Coordinate track</h3><p>Local plot of recorded coordinates; not a street basemap or predicted coverage surface.</p></div><span class="pill" id="trackPill">No track</span></div><div id="mapEmpty" class="empty"><div><b>Waiting for coordinates</b>A CSV with latitude and longitude columns will appear here.</div></div><svg id="trackSvg" class="map" viewBox="0 0 640 340" role="img" aria-label="CSV coordinate track" style="display:none"></svg><div class="legend"><span><i class="swatch" style="background:#65e0d4"></i>Stronger RSSI (indicative)</span><span><i class="swatch" style="background:#f8bd70"></i>Moderate RSSI</span><span><i class="swatch" style="background:#ff8e9b"></i>Weaker RSSI</span><span><i class="swatch" style="background:#91a3b9"></i>No RSSI value</span></div></article>
+ <article class="panel"><div class="panelhead"><div><h3>Signal samples</h3><p>Values by CSV row order, not synchronized time unless the source data supports it.</p></div><span class="pill" id="signalPill">No data</span></div><div id="chartEmpty" class="empty"><div><b>No signal columns found yet</b>RSSI or SNR columns will be plotted when detected.</div></div><svg id="signalSvg" class="chart" viewBox="0 0 640 340" role="img" aria-label="RSSI and SNR values by row" style="display:none"></svg><div class="hint" style="margin-top:10px">Signal display thresholds: RSSI ≥ −85 dBm, −105 to −85 dBm, and below −105 dBm are used only for quick visual grouping. Adjust interpretation for your radio and experiment.</div></article>
+</section>
+<section class="panel tablepanel"><div class="panelhead"><div><h3>Preview</h3><p>First 20 records with source columns preserved and display values normalized.</p></div><span class="pill" id="previewPill">0 records</span></div><div id="tableEmpty" class="empty" style="height:150px"><div><b>No records loaded</b>Pick a CSV to inspect rows.</div></div><div class="tablewrap" id="tableWrap" style="display:none"><table><thead id="tableHead"></thead><tbody id="tableBody"></tbody></table></div></section>
+<footer class="footer"><span>RobotCore Telemetry · Local CSV Inspector v0.1</span><span>File data is held in tab memory only and cleared when you close/reset the page.</span></footer>
+</div>
+<script>
+(() => {
+  const el = id => document.getElementById(id);
+  let records = [];
+  let headers = [];
+  let mapped = {};
+  let sourceName = "";
+  let rawHeader = [];
+  const normalize = value => String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+  function parseCSV(text) {
+    const rows = [];
+    let row = [], field = "", quoted = false;
+    text = text.replace(/^\uFEFF/, "");
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (quoted) {
+        if (ch === '"' && text[i + 1] === '"') { field += '"'; i++; }
+        else if (ch === '"') quoted = false;
+        else field += ch;
+      } else if (ch === '"' && field.length === 0) quoted = true;
+      else if (ch === ",") { row.push(field); field = ""; }
+      else if (ch === "\n") { row.push(field.replace(/\r$/, "")); rows.push(row); row = []; field = ""; }
+      else field += ch;
+    }
+    if (field.length || row.length) { row.push(field.replace(/\r$/, "")); rows.push(row); }
+    return rows.filter(r => r.some(c => String(c).trim() !== ""));
+  }
+  function findColumn(list, variants, substring) {
+    const norm = list.map(normalize);
+    for (const variant of variants) { const idx = norm.indexOf(normalize(variant)); if (idx >= 0) return idx; }
+    if (substring) { const idx = norm.findIndex(v => v.includes(substring)); if (idx >= 0) return idx; }
+    return -1;
+  }
+  function detectColumns(head) {
+    const c = {
+      timestamp: findColumn(head, ["PC Timestamp","Timestamp","Time","Date Time","Datetime"], "timestamp"),
+      sequence: findColumn(head, ["Sequence","Seq","Packet Sequence"]),
+      latitude: findColumn(head, ["Latitude","Lat"]),
+      longitude: findColumn(head, ["Longitude","Lon","Lng"]),
+      speedKmh: findColumn(head, ["Speed (km/h)","Speed km/h","Speed Kmh"]),
+      speedMps: findColumn(head, ["Speed (m/s)","Speed m/s"]),
+      rssi: findColumn(head, ["RSSI (dBm)","RSSI dBm","RSSI","Rx RSSI"], "rssi"),
+      snr: findColumn(head, ["SNR (dB)","SNR dB","SNR"], "snr")
+    };
+    return c;
+  }
+  function number(v) {
+    if (v == null || String(v).trim() === "") return null;
+    const n = Number(String(v).replace(/,/g, "").trim());
+    return Number.isFinite(n) ? n : null;
+  }
+  function get(row, key) { const idx = mapped[key]; return idx >= 0 ? row[idx] ?? "" : ""; }
+  function val(row,key){ return number(get(row,key)); }
+  function average(values) { const v = values.filter(Number.isFinite); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : null; }
+  function fmt(n, digits=2) { return n == null || !Number.isFinite(n) ? "—" : n.toFixed(digits); }
+  function svgText(x,y,text,attrs=""){return '<text x="'+x+'" y="'+y+'" '+attrs+'>'+escapeXml(String(text))+'</text>'}
+  function escapeXml(s){return s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&apos;"}[c]));}
+  function rssiColor(v){return v==null?"#91a3b9":v>=-85?"#65e0d4":v>=-105?"#f8bd70":"#ff8e9b";}
+  function renderMetrics() {
+    const gps = records.filter(r => validCoord(val(r,"latitude"),val(r,"longitude")));
+    const rssis = records.map(r=>val(r,"rssi")).filter(Number.isFinite);
+    const snrs = records.map(r=>val(r,"snr")).filter(Number.isFinite);
+    el("rowsMetric").textContent=records.length.toLocaleString();
+    el("gpsMetric").textContent=gps.length.toLocaleString();
+    el("rssiMetric").textContent=rssis.length.toLocaleString();
+    el("meanRssi").textContent=average(rssis)==null?"—":fmt(average(rssis),1);
+    el("meanSnr").textContent=average(snrs)==null?"—":fmt(average(snrs),1);
+    el("missingGps").textContent=(records.length-gps.length).toLocaleString();
+    el("trackPill").textContent=gps.length+" fixes";
+    el("signalPill").textContent=(rssis.length+snrs.length)+" signal values";
+    el("previewPill").textContent=Math.min(20,records.length)+" / "+records.length+" records";
+  }
+  function validCoord(lat,lon){return lat!=null&&lon!=null&&lat>=-90&&lat<=90&&lon>=-180&&lon<=180;}
+  function renderTrack() {
+    const svg=el("trackSvg");
+    const points=records.map((r,i)=>({i,lat:val(r,"latitude"),lon:val(r,"longitude"),rssi:val(r,"rssi")})).filter(p=>validCoord(p.lat,p.lon));
+    if (!points.length){svg.style.display="none";el("mapEmpty").style.display="grid";return;}
+    el("mapEmpty").style.display="none";svg.style.display="block";
+    const lats=points.map(p=>p.lat), lons=points.map(p=>p.lon);
+    let minLat=Math.min(...lats),maxLat=Math.max(...lats),minLon=Math.min(...lons),maxLon=Math.max(...lons);
+    if(maxLat===minLat){maxLat+=0.00001;minLat-=0.00001;} if(maxLon===minLon){maxLon+=0.00001;minLon-=0.00001;}
+    const pad=40,W=640,H=340,project=p=>({x:pad+(p.lon-minLon)/(maxLon-minLon)*(W-pad*2),y:H-pad-(p.lat-minLat)/(maxLat-minLat)*(H-pad*2)});
+    const grid=[80,160,240,320,400,480,560].map(x=>'<path d="M'+x+' 0V340" stroke="#203143"/>').join("")+[60,120,180,240,300].map(y=>'<path d="M0 '+y+'H640" stroke="#203143"/>').join("");
+    const poly=points.map(project).map(p=>p.x.toFixed(2)+","+p.y.toFixed(2)).join(" ");
+    const circles=points.map((p,i)=>{const xy=project(p);return '<circle cx="'+xy.x.toFixed(2)+'" cy="'+xy.y.toFixed(2)+'" r="'+(i===0||i===points.length-1?5:3.5)+'" fill="'+rssiColor(p.rssi)+'" stroke="#09121b" stroke-width="1.5"><title>CSV row '+(p.i+2)+' · '+p.lat.toFixed(6)+', '+p.lon.toFixed(6)+' · RSSI '+(p.rssi==null?"unknown":p.rssi+" dBm")+'</title></circle>';}).join("");
+    svg.innerHTML='<rect width="640" height="340" fill="#0c1621"/>'+grid+'<polyline points="'+poly+'" fill="none" stroke="#7b9ab5" stroke-width="1.5" stroke-dasharray="4 5" opacity=".75"/>'+circles+svgText(12,20,"RELATIVE COORDINATE PLOT",'fill="#829ab2" font-size="10" letter-spacing="1.4"')+svgText(12,326,"Longitude: "+minLon.toFixed(5)+" to "+maxLon.toFixed(5),'fill="#829ab2"')+svgText(628,326,"Lat: "+minLat.toFixed(5)+" to "+maxLat.toFixed(5),'fill="#829ab2" text-anchor="end"');
+  }
+  function renderChart() {
+    const svg=el("signalSvg"), rssi=records.map(r=>val(r,"rssi")), snr=records.map(r=>val(r,"snr"));
+    if(!rssi.some(Number.isFinite)&&!snr.some(Number.isFinite)){svg.style.display="none";el("chartEmpty").style.display="grid";return;}
+    svg.style.display="block";el("chartEmpty").style.display="none";
+    const W=640,H=340,pl=48,pr=18,pt=24,pb=34;const vals=rssi.concat(snr).filter(Number.isFinite);
+    let min=Math.min(...vals),max=Math.max(...vals);if(min===max){min-=1;max+=1;}const y0=Math.floor(min/10)*10,y1=Math.ceil(max/10)*10;min=y0;max=y1===y0?y0+10:y1;
+    const x=i=>pl+(records.length<=1?0:i/(records.length-1))*(W-pl-pr), y=v=>H-pb-(v-min)/(max-min)*(H-pt-pb);
+    const out=[];for(let i=0;i<=4;i++){const v=min+(max-min)*i/4,yy=y(v);out.push('<path d="M'+pl+' '+yy+'H'+(W-pr)+'" stroke="#253448"/>',svgText(pl-8,yy+3,v.toFixed(0),'text-anchor="end"'));}
+    function line(arr,color){const pts=[];arr.forEach((v,i)=>{if(Number.isFinite(v))pts.push((pts.length?"L":"M")+x(i).toFixed(2)+" "+y(v).toFixed(2));else if(pts.length&&i<arr.length-1){} });return pts.length?'<path d="'+pts.join(" ")+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>':"";}
+    out.push(line(rssi,"#65e0d4"),line(snr,"#f8bd70"));
+    out.push(svgText(pl,H-10,"CSV row 1"),svgText(W-pr,H-10,"CSV row "+records.length,'text-anchor="end"'));
+    out.push('<rect x="56" y="6" width="8" height="8" rx="2" fill="#65e0d4"/>',svgText(69,14,"RSSI (dBm)"),'<rect x="157" y="6" width="8" height="8" rx="2" fill="#f8bd70"/>',svgText(170,14,"SNR (dB)"));
+    svg.innerHTML=out.join("");
+  }
+  function renderTable() {
+    const shown=records.slice(0,20), head=rawHeader;
+    if(!shown.length){el("tableEmpty").style.display="grid";el("tableWrap").style.display="none";return;}
+    el("tableEmpty").style.display="none";el("tableWrap").style.display="block";
+    el("tableHead").innerHTML="<tr>"+head.map(h=>"<th>"+escapeXml(h)+"</th>").join("")+"</tr>";
+    el("tableBody").innerHTML=shown.map(row=>"<tr>"+head.map((_,i)=>"<td title=\""+escapeXml(String(row[i]??""))+"\">"+escapeXml(String(row[i]??""))+"</td>").join("")+"</tr>").join("");
+  }
+  function showError(message){const e=el("error");e.textContent=message;e.style.display="block";}
+  function clearError(){const e=el("error");e.textContent="";e.style.display="none";}
+  function reset(){records=[];headers=[];mapped={};sourceName="";rawHeader=[];el("csvFile").value="";["rowsMetric","gpsMetric","rssiMetric","meanRssi","meanSnr","missingGps"].forEach(id=>el(id).textContent="—");el("fileStatus").textContent="No file loaded. Import a CSV to start.";el("mapEmpty").style.display="grid";el("trackSvg").style.display="none";el("chartEmpty").style.display="grid";el("signalSvg").style.display="none";el("tableEmpty").style.display="grid";el("tableWrap").style.display="none";el("trackPill").textContent="No track";el("signalPill").textContent="No data";el("previewPill").textContent="0 records";el("exportBtn").disabled=true;el("clearBtn").disabled=true;clearError();}
+  el("csvFile").addEventListener("change",async event=>{
+    reset();
+    const file=event.target.files?.[0]; if(!file)return;
+    sourceName=file.name;
+    try{
+      if(file.size>100*1024*1024)throw new Error("For safety this inspector limits CSV files to 100 MB. Split very large logs into sessions first.");
+      const text=await file.text();
+      const rows=parseCSV(text);
+      if(rows.length<2)throw new Error("The CSV needs a header row and at least one data row.");
+      rawHeader=rows[0].map(v=>String(v).trim()); mapped=detectColumns(rawHeader);
+      if(mapped.latitude<0&&mapped.longitude<0&&mapped.rssi<0&&mapped.snr<0)throw new Error("Could not detect latitude/longitude or RSSI/SNR columns. Check the header row.");
+      records=rows.slice(1).map(row=>{const padded=row.slice();while(padded.length<rawHeader.length)padded.push("");return padded;});
+      headers=rawHeader;
+      renderMetrics();renderTrack();renderChart();renderTable();
+      el("fileStatus").textContent=file.name+" · "+records.length.toLocaleString()+" rows · "+(file.size/1024).toFixed(1)+" KB · parsed locally";
+      el("exportBtn").disabled=false;el("clearBtn").disabled=false;clearError();
+    }catch(err){reset();showError(err?.message||"Unable to read this CSV.");}
+  });
+  el("clearBtn").addEventListener("click",reset);
+  el("exportBtn").addEventListener("click",()=>{
+    if(!records.length)return;
+    const normalized=records.map((row,idx)=>({
+      schema_version:"1.0.0",
+      experiment_id:sourceName.replace(/\.csv$/i,"")||"local-import",
+      session_id:"local-import",
+      sequence:mapped.sequence>=0?number(row[mapped.sequence]):null,
+      receive_time:mapped.timestamp>=0?(row[mapped.timestamp]||null):null,
+      latitude:mapped.latitude>=0?number(row[mapped.latitude]):null,
+      longitude:mapped.longitude>=0?number(row[mapped.longitude]):null,
+      speed_mps:mapped.speedMps>=0?number(row[mapped.speedMps]):mapped.speedKmh>=0?(number(row[mapped.speedKmh])==null?null:number(row[mapped.speedKmh])/3.6):null,
+      rssi_dbm:mapped.rssi>=0?number(row[mapped.rssi]):null,
+      snr_db:mapped.snr>=0?number(row[mapped.snr]):null,
+      source_file:sourceName,
+      source_row:idx+2,
+      quality_flags:[]
+    }));
+    const blob=new Blob([JSON.stringify({source_file:sourceName,exported_at:new Date().toISOString(),processing:"browser-only",records:normalized},null,2)],{type:"application/json"});
+    const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=sourceName.replace(/\.csv$/i,"")+".normalized.json";a.click();URL.revokeObjectURL(url);
+  });
+})();
+</script>
+</body>
+</html>
