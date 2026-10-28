@@ -1,57 +1,76 @@
 # RobotCore Telemetry
 
-A research platform for collecting and analyzing real-world LoRa communication data using a Raspberry Pi transmitter, GPS, WT901BLE68 IMU, LoRa-E5 radios, and a laptop receiver.
+A field-research workspace for measuring LoRa link quality while carrying the Raspberry Pi transmitter around MANIT Bhopal. The system separates transmitter-side sample truth from laptop receiver observations and lets a phone monitor the laptop over an authenticated read-only connection.
 
-**Live dashboard:** https://robotcore-telemetry.vercel.app  
-**Local CSV inspector:** https://robotcore-telemetry.vercel.app/import.html  
-**Repository:** https://github.com/lalitkumar790/robotcore-telemetry
+Live dashboard: https://robotcore-telemetry.vercel.app
+Local CSV inspector: https://robotcore-telemetry.vercel.app/import.html
+Repository: https://github.com/lalitkumar790/robotcore-telemetry
 
-## Dashboard capabilities
+## Two separate capture endpoints
 
-- Live OpenStreetMap centered on MANIT Bhopal, with GPS points colored by measured RSSI.
-- Browser-based LoRa-E5 receiver connection over Web Serial on supported Chrome/Edge browsers; validates RTPv1/RTPv2 CRC and sequence before plotting.
-- Device-status panel for browser API support, receiver serial connection, transmitter packets observed, GPS validity, WT901BLE68 IMU, and laptop recording.
-- Live charts for RSSI/SNR, roll/pitch/yaw, acceleration and gyroscope, plus an attitude/motion display.
-- Interactive 3D coordinate point cloud. RTPv2 has no altitude field, so the point cloud labels its vertical axis as sample progression rather than claiming terrain height.
-- Local browser recording to IndexedDB and CSV export for receiver-side data.
-- Dual-ended comparison: pair each Pi .rcm mission with its matching laptop receiver CSV. Sequence alignment marks transmitter samples not found in the receiver log at their recorded Pi GPS positions, draws track breaks at missing samples, and summarizes packet delivery by distance bins. A second route pair can be loaded for comparison.
+### Raspberry Pi transmitter
 
-## Capture workflow
+Code: hardware/pi-transmitter
 
-1. Open the HTTPS dashboard in current Chrome or Edge.
-2. Choose **Device status → Connect receiver**, then select the USB serial port of the LoRa-E5 receiver. The dashboard sends the project's current test-mode/radio configuration at 9600 baud.
-3. Select **Start laptop recording**. Only decoded, CRC-valid packets are stored locally in this browser; click **Save laptop CSV** to export the receiver-side log.
-4. The Pi's existing transmitter program records .rcm mission samples locally in its missions directory regardless of whether every LoRa packet reaches the receiver.
-5. In **Dual-ended capture**, import the matching Pi .rcm and receiver CSV files. For route comparison, import a second matched pair as Route B.
+- Detects the known GPS and LoRa USB IDs, reports all serial devices, accepts explicit port overrides, and fails safely if more than one candidate matches.
+- Scans/reconnects to WT901BLE68 BLE in the background, tracks freshness, and exposes connection errors instead of silently claiming IMU health.
+- Waits for a valid GPS RMC fix; missing fixes are logged as skipped samples instead of using fabricated/stale coordinates.
+- Preserves the existing 35-byte RTPv2 packet and RCM1 mission file structure for compatibility with the working radio receiver.
+- Writes three local artifacts for each experiment: the binary .rcm mission, an append-only .events.jsonl sidecar with GPS/IMU and LoRa transmit outcomes, and a .manifest.json with experiment metadata and radio settings.
 
-Files selected for inspection are parsed in the browser; the dashboard does not send raw location files to a remote API.
+### Laptop receiver
 
-## Important measurement caveats
+Code: hardware/laptop-receiver
 
-A sequence absent from the receiver log is classified as **not received**, not automatically as RF propagation loss. The current Pi mission format records a sample before the transmission attempt but does not store a per-sequence transmit result. A missing receiver sequence may therefore reflect RF loss, transmitter send failure, receiver outage, or mismatched/incomplete files. The dashboard also warns about sequence-wrap ambiguity when a receiver log starts mid-mission after a sequence wrap.
+- Owns the LoRa-E5 receiver serial port in one process.
+- Decodes RTPv1/RTPv2, validates CRC, tracks packet sequences, and writes a receiver CSV with receive timestamps, GPS, RSSI/SNR, sequence gaps, PDR and IMU fields.
+- Runs an authenticated, read-only WebSocket bridge on localhost.
+- The dashboard can connect to this bridge through a temporary tunnel so you can monitor the laptop receiver from your phone while the laptop remains in your room.
+- Continues recording locally if the phone loses mobile coverage.
 
-The PC receive timestamp is not a sensor-acquisition timestamp. The current RTPv2 payload includes GPS, speed and IMU values but no per-sample timestamp or altitude. The 3D display uses sample progression vertically until an altitude-aware data source is available.
+Do not run the existing desktop ground-station receiver and the laptop bridge on the same COM port at once.
+
+## Phone-to-laptop live view
+
+1. Start the Pi transmitter and make sure it reports a current GPS fix and a fresh WT901BLE68 connection.
+2. Start the laptop bridge with the same experiment ID as the Pi. Choose the correct receiver port, for example COM8 only if that is what Device Manager lists.
+3. The bridge prints a one-run token. Leave the bridge process running.
+4. In a second laptop terminal, start Cloudflare Quick Tunnel to http://127.0.0.1:8765.
+5. Open the dashboard on your phone, choose Device status, and paste the temporary HTTPS tunnel URL plus the token.
+6. Walk with the Pi. The phone shows the latest data that the receiver in your room actually decoded; the laptop keeps its CSV independently.
+
+Quick Tunnel hostnames are temporary and have no uptime guarantee, so this workflow is for a field test rather than a permanent endpoint. See Cloudflare's notes: https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/ and https://developers.cloudflare.com/network/websockets/.
+
+## Merge after the walk
+
+Keep the three Pi artifacts and the matching laptop CSV together in private local storage:
+
+- Pi .rcm: transmitter sample sequence, GPS, speed and IMU fields for each valid GPS sample.
+- Laptop receiver CSV: packets actually received and radio metadata RSSI/SNR, plus receiver time and sequence stats.
+- Pi .events.jsonl: per-sequence transmit attempt/result, GPS skips and physical IMU freshness.
+- Pi .manifest.json: experiment ID, radio settings, start/end and counts.
+
+In the dashboard's Dual-ended capture section, load the Pi .rcm, the matching receiver CSV and optional Pi event sidecar as Route A. To compare another path, load a second matched set as Route B. The dashboard aligns by sequence, plots received and missing transmitter samples at the Pi coordinates, summarizes PDR by distance segment, shows transmit-failure counts where sidecar evidence exists, and exports a loss-map CSV.
+
+## Important measurement boundaries
+
+- A sample absent from the receiver is classified as end-to-end “not received,” not automatically radio propagation loss. It may represent RF loss, a local transmit failure, receiver outage or mismatched/incomplete logs.
+- A modem TX DONE response is not a receiver acknowledgement.
+- The RTPv2 packet does not contain a sample-acquisition timestamp, altitude or IMU-presence flag. The sidecar records Pi sensor health; embedded IMU fields alone cannot prove that WT901BLE68 was connected.
+- PDR begins at the first sequence observed at the receiver, and therefore excludes unknown losses before that point.
+- Sequence numbers wrap from 65535 to 1. Use complete, matching session logs; sequence-only matching can be ambiguous when a receiver log begins mid-mission after a wrap.
+- Compare routes only with comparable frequency, SF/BW, TX power, antenna position/orientation and receiver conditions.
+- RTPv2 has no altitude field. The holographic point cloud labels vertical progression as sample progression, not terrain height.
 
 ## Repository layout
 
-- `apps/web-dashboard/` — research console, local CSV inspector, live device logic
-- `schemas/` — versioned normalized telemetry record schema
-- `data/manifests/` — repeatable experiment metadata template
-- `data/raw/` — raw-data privacy policy; raw GPS files are excluded from Git
-- `docs/` — architecture, data dictionary, repeatable experiments, dual-ended capture
-- `research/` — data quality, coverage mapping, link prediction, path planning
-- `services/ingestion-api/` — future API requirements
-- `hardware/` — destination for Pi transmitter and Windows ground-station source snapshots
+- apps/web-dashboard: live research console, phone bridge controls, route comparison, browser-local recording and CSV inspector
+- hardware/pi-transmitter: Pi sensors, TX, device discovery, RCM writer, event sidecar and protocol tests
+- hardware/laptop-receiver: receiver CSV logger, read-only WebSocket bridge and protocol tests
+- docs/field-collection-runbook.md: complete runbook for field collection and merge
+- docs/dual-ended-capture.md: dual-ended capture format and analysis caveats
+- schemas, data/manifests and research: data contract and future analysis stages
 
-## Roadmap
+## Privacy
 
-1. Reconcile transmitter and receiver using golden-packet tests and hardware-in-the-loop checks.
-2. Record radio configuration, experiment/session IDs, and both endpoint logs.
-3. Add a Pi-side transmit-result event log so RF non-reception can be separated from local TX errors.
-4. Validate RSSI/SNR, GPS fixes, sequence gaps, duplicates, and source provenance.
-5. Build measured coverage maps before evaluating spatial link prediction.
-6. Evaluate communication-aware path planning against explicit path and safety baselines.
-
-## Data and privacy
-
-Do not commit raw GPS tracks, private mission files, credentials or .env files. Keep raw files immutable and local/access-controlled; share only reviewed, sanitized examples. GitHub Actions performs syntax/schema checks, not hardware validation.
+Raw GPS tracks, mission files, receiver CSVs, BLE addresses when not needed, bridge tokens and .env files should not be committed. Keep source captures immutable and local/access-controlled, and share only reviewed/sanitized data. GitHub Actions runs syntax, JSON, and protocol unit checks; actual GPS, BLE and radio hardware still needs a physical smoke test.
