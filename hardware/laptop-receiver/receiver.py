@@ -209,6 +209,10 @@ class ReceiverWorker(threading.Thread):
 
     def _process_packet(self, payload: bytes) -> None:
         now_ms = int(time.time() * 1000)
+        # RSSI/SNR are emitted on the metadata line immediately before the payload.
+        # Consume them exactly once so a malformed/absent metadata line cannot reuse stale values.
+        rssi, snr = self._pending_rssi, self._pending_snr
+        self._pending_rssi, self._pending_snr = None, None
         try:
             record = decode_packet(payload)
         except ValueError as error:
@@ -242,8 +246,8 @@ class ReceiverWorker(threading.Thread):
             "receivedAtUtc": utc_iso(),
             "sourceIndex": source_index,
             "source": "laptop-rx",
-            "rssi": self._pending_rssi,
-            "snr": self._pending_snr,
+            "rssi": rssi,
+            "snr": snr,
             "lostBefore": lost_before,
             "outOfOrder": out_of_order,
             "inOrder": not out_of_order and lost_before == 0,
@@ -260,8 +264,8 @@ class ReceiverWorker(threading.Thread):
                 "Experiment ID": EXPERIMENT_ID, "RX Session ID": self.session_id,
                 "Sequence": record["sequence"], "Protocol": record["protocol"],
                 "Latitude": record["latitude"], "Longitude": record["longitude"],
-                "Speed (km/h)": record["speed"], "RSSI (dBm)": self._pending_rssi if self._pending_rssi is not None else "",
-                "SNR (dB)": self._pending_snr if self._pending_snr is not None else "",
+                "Speed (km/h)": record["speed"], "RSSI (dBm)": rssi if rssi is not None else "",
+                "SNR (dB)": snr if snr is not None else "",
                 "Lost Before": lost_before, "Out Of Order": int(out_of_order), "CRC Valid": 1,
                 "Packets Received": received_count, "Packets Lost": lost_count, "Packets Corrupt": corrupt_count,
                 "PDR (%)": round(pdr, 3) if pdr is not None else "",
@@ -278,7 +282,11 @@ class ReceiverWorker(threading.Thread):
             }
             self._csv_writer.writerow(row)
             self._csv_file.flush()
-        self.on_packet(received)
+        try:
+            self.on_packet(received)
+        except Exception as error:
+            with self.lock:
+                self.last_error = f"Telemetry broadcast error: {error}"
         self._status_changed()
 
     def run(self) -> None:
