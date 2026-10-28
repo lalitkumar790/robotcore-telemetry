@@ -75,6 +75,10 @@ def main() -> int:
         lora = LoRaE5(lora_port, radio_config) if lora_port != "UNAVAILABLE" else None
     except Exception as error:
         lora = None
+        if args.require_lora:
+            gps.close()
+            imu.close()
+            raise SystemExit(f"[LoRa] Could not open required transmitter port; aborting field run: {error}")
         print(f"[LoRa] Could not open transmitter port; local mission capture continues: {error}")
 
     radio_event_type = None
@@ -92,6 +96,11 @@ def main() -> int:
             print("[LoRa] Test mode response:", mode_response or "(no text response)")
             print("[LoRa] Config response:", config_response or "(no text response)")
             if not confirmed:
+                if args.require_lora:
+                    gps.close()
+                    imu.close()
+                    lora.close()
+                    raise SystemExit("[LoRa] Required radio configuration was not acknowledged; aborting field run.")
                 print("[LoRa] Radio config response was inconclusive. TX is best-effort and logged.")
         except Exception as error:
             radio_event_type = "radio_config_error"
@@ -102,6 +111,10 @@ def main() -> int:
             except Exception:
                 pass
             lora = None
+            if args.require_lora:
+                gps.close()
+                imu.close()
+                raise SystemExit("[LoRa] Required radio setup failed; aborting field run.")
 
     print(
         f"[IMU] Preflight: waiting up to {args.imu_startup_timeout:.0f}s for a fresh WT901BLE68 reading. "
