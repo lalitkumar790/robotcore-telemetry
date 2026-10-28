@@ -104,7 +104,7 @@ def main() -> int:
     try:
         imu_ready = wait_for_fresh_imu(imu, args.imu_startup_timeout)
     except KeyboardInterrupt:
-        print("\\n[FIELD] Startup cancelled before mission recording began.")
+        print("\n[FIELD] Startup cancelled before mission recording began.")
         gps.close()
         imu.close()
         if lora is not None:
