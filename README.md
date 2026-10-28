@@ -1,32 +1,43 @@
 # RobotCore Telemetry
 
-A research-driven robotics platform for collecting and analyzing real-world LoRa communication data. The project integrates Raspberry Pi, GPS, IMU sensors, and LoRa-E5 radios to build location-aware communication maps, study link quality, and support future communication-aware path planning for mobile robots.
+A robotics research platform for collecting and analyzing real-world LoRa communication data. The intended system combines Raspberry Pi, GPS, WT901BLE68 IMU, and LoRa-E5 radios with a ground station and a reproducible research pipeline.
 
-## Research status
+**Dashboard:** https://robotcore-telemetry.vercel.app  
+**Repository:** https://github.com/lalitkumar790/robotcore-telemetry
 
-This repository is being structured as a reproducible research and engineering workspace. Coverage mapping, prediction, and communication-aware path planning are research milestones, not claims of completed functionality.
+## Current status
 
-## Planned workspace
+- **Research console:** a static, responsive dashboard scaffold is deployed. No telemetry backend or dataset is connected yet.
+- **Data contract:** normalized telemetry JSON schema and an example experiment manifest are included.
+- **Research notes:** architecture, data dictionary, field experiment protocol, data quality, coverage mapping, link prediction, and path-planning workstreams are documented.
+- **Hardware integration:** the Raspberry Pi transmitter and Windows ground-station snapshots have been audited locally and packed in the starter archive, but those source snapshots still need to be synchronized into this remote repository.
 
-- `hardware/pi-transmitter/` — Raspberry Pi telemetry transmitter snapshot
-- `hardware/windows-groundstation/` — Windows receiver and ground-station snapshot
-- `hardware/legacy-loramapper/` — legacy project snapshot retained for comparison
-- `data/` — data schemas, manifests, and local-only raw data
-- `docs/` — architecture, audit notes, data dictionary, and experiment protocol
+Coverage prediction and communication-aware path planning are future milestones. They are not represented as completed functionality.
+
+## Repository layout
+
+- `apps/web-dashboard/` — static research console prototype
+- `schemas/` — versioned normalized telemetry record schema
+- `data/manifests/` — experiment manifest template
+- `data/raw/` — local/raw-data policy; raw location traces are excluded from Git
+- `docs/` — architecture, data dictionary, and repeatable field protocol
 - `research/` — data quality, coverage mapping, link prediction, and path planning
-- `services/` — future ingestion API
-- `apps/` — future web dashboard
+- `services/ingestion-api/` — future API requirements
+- `hardware/` — destination for transmitter, ground-station, and legacy source snapshots
+
+## Roadmap
+
+1. Verify transmitter/receiver compatibility with golden-packet tests.
+2. Capture field sessions with experiment IDs, radio configuration, and timestamp semantics.
+3. Validate GPS, RSSI/SNR, sequence handling, packet-loss calculations, and raw-data provenance.
+4. Plot measured tracks and link quality before producing any predictions.
+5. Evaluate spatial link models with session/route-aware holdouts and simple baselines.
+6. Evaluate communication-aware route planning against shortest-path and safety baselines.
 
 ## Data and privacy
 
-Do not commit raw GPS tracks, private missions, credentials, `.env` files, or identifiable field logs. Keep raw data local and use manifests and validated, sanitized exports when sharing research results.
+Do not commit raw GPS tracks, private mission files, credentials, `.env` files, or identifiable field logs. Raw data should remain immutable and local or access-controlled. Share only reviewed, sanitized samples and document transformations.
 
-## Initial workflow
+## Development checks
 
-1. Validate transmitter/receiver protocol compatibility with golden packet tests.
-2. Record reproducible experiments with radio settings and session metadata.
-3. Validate timestamp, GPS, RSSI/SNR, sequence, and packet-loss quality.
-4. Build measured coverage visualization before evaluating predictive models.
-5. Evaluate prediction and route planning only after collecting sufficient validated field data.
-
-See `docs/` and `research/` as these are added to the repository.
+GitHub Actions performs basic Python syntax compilation and JSON validation. These checks do not replace hardware-in-the-loop tests or experimental validation.
