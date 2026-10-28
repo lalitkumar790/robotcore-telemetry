@@ -3,6 +3,7 @@
 A robotics research platform for collecting and analyzing real-world LoRa communication data. The intended system combines Raspberry Pi, GPS, WT901BLE68 IMU, and LoRa-E5 radios with a ground station and a reproducible research pipeline.
 
 **Dashboard:** https://robotcore-telemetry.vercel.app  
+**Local CSV inspector:** https://robotcore-telemetry.vercel.app/import.html  
 **Repository:** https://github.com/lalitkumar790/robotcore-telemetry
 
 ## Current status
