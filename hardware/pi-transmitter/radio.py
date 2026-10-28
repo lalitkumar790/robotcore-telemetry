@@ -46,7 +46,8 @@ class LoRaE5:
             f"{c.bandwidth_khz},{c.tx_preamble},{c.rx_preamble},{c.power_dbm},ON,OFF,OFF"
         )
         response = self.command(command, timeout_s=1.5, stop_on=("+TEST: RFCFG", "OK"))
-        self.configured = bool(response) and not _ERROR.search(response)
+        upper = response.upper()
+        self.configured = bool(response) and not _ERROR.search(response) and ("+TEST: RFCFG" in upper or "OK" in upper)
         return self.configured, response
 
     def transmit(self, packet: bytes, timeout_s: float = 4.0) -> tuple[str, str]:
