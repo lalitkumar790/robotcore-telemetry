@@ -79,7 +79,7 @@ class WitMotion:
                     self.last_error = "IMU not found by address/name; retrying scan in 3 seconds"
                     await asyncio.sleep(3.0)
                     continue
-                client = BleakClient(device, timeout=10.0)
+                client = BleakClient(device, timeout=25.0)
                 self._client = client
                 await client.connect()
                 await client.start_notify(NOTIFY_UUID, self._notification_handler)
