@@ -25,7 +25,7 @@ RADIO_DEFAULTS = {
 }
 
 
-def create_app(port: str, log_dir: str, token: str, allowed_origins: set[str], radio: dict | None = None) -> FastAPI:
+def create_app(port: str, log_dir: str, token: str, allowed_origins: set[str], radio: dict | None = None, experiment_id: str = "UNLABELLED") -> FastAPI:
     radio_config = dict(RADIO_DEFAULTS)
     if radio:
         radio_config.update(radio)
@@ -74,7 +74,7 @@ def create_app(port: str, log_dir: str, token: str, allowed_origins: set[str], r
         status = worker.status() if worker else {
             "serial_connected": False, "radio_configured": False, "serial_port": port,
             "last_error": "receiver worker not started", "rx_session_id": None,
-            "experiment_id": os.getenv("ROBOTCORE_EXPERIMENT_ID", "UNLABELLED"),
+            "experiment_id": experiment_id,
             "packets_received": 0, "packets_lost": 0, "packets_corrupt": 0, "pdr": None,
         }
         status.update({"read_only": True, "radio_config": radio_config})
@@ -94,6 +94,7 @@ def create_app(port: str, log_dir: str, token: str, allowed_origins: set[str], r
         worker = ReceiverWorker(
             port=port, log_dir=log_dir, radio=radio_config,
             on_packet=packet_callback, on_status=status_callback,
+            experiment_id=experiment_id,
         )
         worker_holder["worker"] = worker
         worker.start()
@@ -196,7 +197,7 @@ def main() -> None:
     print("[SECURITY] Token is generated for this run and stays in memory. No telemetry API or remote write controls are exposed.")
     print("[SECURITY] Stop any desktop GUI/receiver process that is using this same serial port before continuing.")
     print("=" * 72, flush=True)
-    app = create_app(port, args.logs, token, origins)
+    app = create_app(port, args.logs, token, origins, experiment_id=args.experiment_id)
     uvicorn.run(app, host=args.host, port=args.listen_port, log_level="warning", access_log=False)
 
 
