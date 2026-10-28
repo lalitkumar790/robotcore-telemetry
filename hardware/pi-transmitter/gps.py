@@ -46,6 +46,10 @@ class GPS:
         print(f"[GPS] Opened {port} at {GPS_BAUD} baud")
 
     def read_fix(self, timeout_s: float = 1.5) -> GPSFix | None:
+        if self.serial is None or not self.serial.is_open:
+            self.try_reconnect()
+            if self.serial is None:
+                return None
         deadline = time.monotonic() + max(0.05, timeout_s)
         while time.monotonic() < deadline:
             try:
