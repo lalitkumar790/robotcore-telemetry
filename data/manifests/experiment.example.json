@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0.0",
+  "experiment_id": "EXP-YYYYMMDD-001",
+  "session_id": "SESSION-001",
+  "site": {
+    "label": "sanitized-site-label",
+    "coordinate_policy": "private-unless-reviewed"
+  },
+  "started_at": null,
+  "timezone": "Asia/Kolkata",
+  "operator_id": null,
+  "transmitter": {
+    "platform": "Raspberry Pi",
+    "software_revision": null,
+    "gps_model": null,
+    "imu_model": "WT901BLE68",
+    "radio_model": "Seeed LoRa-E5"
+  },
+  "receiver": {
+    "platform": "Windows",
+    "software_revision": null,
+    "radio_model": "Seeed LoRa-E5"
+  },
+  "radio_config": {
+    "frequency_mhz": 865,
+    "spreading_factor": 7,
+    "bandwidth_khz": 125,
+    "tx_power_dbm": 14,
+    "tx_preamble_symbols": 12,
+    "rx_preamble_symbols": 15,
+    "crc_enabled": true
+  },
+  "notes": [],
+  "raw_artifacts": [],
+  "checksums": {},
+  "exclusions": []
+}
