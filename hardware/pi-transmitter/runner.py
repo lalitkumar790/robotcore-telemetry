@@ -11,6 +11,7 @@ from mission_recorder import MissionRecorder
 from radio import LoRaE5
 from rtp2 import encode_rtpv2
 from witmotion import WitMotion
+from imu_preflight import wait_for_fresh_imu
 
 
 def parse_args():
@@ -19,6 +20,10 @@ def parse_args():
     parser.add_argument("--lora-port", help="explicit LoRa-E5 serial device; overrides ROBOTCORE_LORA_PORT")
     parser.add_argument("--list-devices", action="store_true", help="list USB serial devices and exit")
     parser.add_argument("--interval", type=float, default=TX_INTERVAL, help="seconds between samples")
+    parser.add_argument(
+        "--imu-startup-timeout", type=float, default=90.0,
+        help="seconds to wait for a fresh WT901BLE68 sample before recording or transmitting (default: 90)",
+    )
     return parser.parse_args()
 
 
@@ -29,6 +34,8 @@ def main() -> int:
         return 0
     if args.interval < 0.5:
         raise SystemExit("Sampling interval must be at least 0.5 seconds.")
+    if args.imu_startup_timeout < 1.0:
+        raise SystemExit("IMU startup timeout must be at least 1 second.")
 
     if args.gps_port:
         os.environ["ROBOTCORE_GPS_PORT"] = args.gps_port
@@ -64,23 +71,60 @@ def main() -> int:
         lora = None
         print(f"[LoRa] Could not open transmitter port; local mission capture continues: {error}")
 
-    recorder = MissionRecorder(MISSIONS_DIR, EXPERIMENT_ID, radio_config.as_dict(), gps_port, lora_port)
+    radio_event_type = None
+    radio_event_fields: dict = {}
     if lora is not None:
         try:
             mode_response = lora.enter_test_mode()
             confirmed, config_response = lora.configure()
-            recorder.write_event("radio_config", mode_response=mode_response, radio_config_response=config_response,
-                                 config_confirmed=confirmed)
+            radio_event_type = "radio_config"
+            radio_event_fields = {
+                "mode_response": mode_response,
+                "radio_config_response": config_response,
+                "config_confirmed": confirmed,
+            }
             print("[LoRa] Test mode response:", mode_response or "(no text response)")
             print("[LoRa] Config response:", config_response or "(no text response)")
             if not confirmed:
                 print("[LoRa] Radio config response was inconclusive. TX is best-effort and logged.")
         except Exception as error:
-            recorder.write_event("radio_config_error", error=str(error))
+            radio_event_type = "radio_config_error"
+            radio_event_fields = {"error": str(error)}
             print(f"[LoRa] Configuration failed; TX disabled but mission capture continues: {error}")
-            try: lora.close()
-            except Exception: pass
+            try:
+                lora.close()
+            except Exception:
+                pass
             lora = None
+
+    print(
+        f"[IMU] Preflight: waiting up to {args.imu_startup_timeout:.0f}s for a fresh WT901BLE68 reading. "
+        "No mission sample or LoRa packet will be produced before this passes."
+    )
+    try:
+        imu_ready = wait_for_fresh_imu(imu, args.imu_startup_timeout)
+    except KeyboardInterrupt:
+        print("\\n[FIELD] Startup cancelled before mission recording began.")
+        gps.close()
+        imu.close()
+        if lora is not None:
+            lora.close()
+        return 130
+
+    if not imu_ready:
+        print(
+            f"[IMU] No fresh reading received within {args.imu_startup_timeout:.0f}s. "
+            "Aborting without recording zero-filled startup samples."
+        )
+        gps.close()
+        imu.close()
+        if lora is not None:
+            lora.close()
+        return 2
+
+    recorder = MissionRecorder(MISSIONS_DIR, EXPERIMENT_ID, radio_config.as_dict(), gps_port, lora_port)
+    if radio_event_type is not None:
+        recorder.write_event(radio_event_type, **radio_event_fields)
 
     print(f"[MISSION] RCM: {recorder.path}")
     print(f"[MISSION] Events: {recorder.events_path}")
