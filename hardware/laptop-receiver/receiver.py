@@ -58,9 +58,10 @@ def utc_iso() -> str:
 class ReceiverWorker(threading.Thread):
     """Single owner of the laptop receiver serial port, CSV log and packet stream."""
 
-    def __init__(self, port: str, log_dir: str, radio: dict, on_packet: Callable[[dict], None], on_status: Callable[[], None]):
+    def __init__(self, port: str, log_dir: str, radio: dict, on_packet: Callable[[dict], None], on_status: Callable[[], None], experiment_id: str | None = None):
         super().__init__(daemon=True, name="RobotCoreRadioReceiver")
         self.port_name = port
+        self.experiment_id = (experiment_id or EXPERIMENT_ID or "UNLABELLED").strip()
         self.log_dir = Path(log_dir).expanduser().resolve()
         self.radio = dict(radio)
         self.on_packet = on_packet
@@ -100,7 +101,7 @@ class ReceiverWorker(threading.Thread):
                 "radio_config_response": self.radio_config_response[-400:],
                 "last_error": self.last_error,
                 "rx_session_id": self.session_id,
-                "experiment_id": EXPERIMENT_ID,
+                "experiment_id": self.experiment_id,
                 "log_file": str(self.log_path) if self.log_path else None,
                 "packets_received": self.packets_received,
                 "packets_lost": self.packets_lost,
@@ -256,12 +257,12 @@ class ReceiverWorker(threading.Thread):
             "packetsCorrupt": corrupt_count,
             "pdr": pdr,
             "rxSessionId": self.session_id,
-            "experimentId": EXPERIMENT_ID,
+            "experimentId": self.experiment_id,
         })
         if self._csv_writer is not None:
             row = {
                 "RX Time UTC": received["receivedAtUtc"], "RX Epoch ms": now_ms,
-                "Experiment ID": EXPERIMENT_ID, "RX Session ID": self.session_id,
+                "Experiment ID": self.experiment_id, "RX Session ID": self.session_id,
                 "Sequence": record["sequence"], "Protocol": record["protocol"],
                 "Latitude": record["latitude"], "Longitude": record["longitude"],
                 "Speed (km/h)": record["speed"], "RSSI (dBm)": rssi if rssi is not None else "",
