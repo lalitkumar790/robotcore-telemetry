@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0c111b">
+<title>RobotCore Telemetry — Research Console</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1018;--panel:#111a27;--panel2:#151f2e;--line:#263448;--text:#ecf3fc;--muted:#91a3b9;--blue:#80b9ff;--cyan:#65e0d4;--orange:#f8bd70;--red:#ff8e9b;--radius:16px}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 18% -10%,#182b43 0,transparent 42%),var(--bg);color:var(--text);font:14px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
+a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}.shell{max-width:1440px;margin:auto;padding:24px}.top{display:flex;align-items:center;justify-content:space-between;gap:18px;border-bottom:1px solid var(--line);padding-bottom:22px}.brand{display:flex;align-items:center;gap:12px}.logo{height:42px;width:42px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(145deg,#23486b,#142838);border:1px solid #3c6688;color:var(--cyan);font-size:21px}.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--cyan);font-weight:700}.brand h1{font-size:19px;letter-spacing:-.025em;margin:2px 0 0}.topright{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.pill{border:1px solid var(--line);border-radius:99px;padding:6px 10px;color:var(--muted);font-size:12px}.pill.live{color:var(--orange);border-color:#795c36;background:#302617}.intro{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;padding:30px 0 22px}.intro h2{font-size:clamp(26px,4vw,38px);line-height:1.12;letter-spacing:-.04em;max-width:760px;margin:8px 0 10px}.intro p{color:var(--muted);max-width:760px;margin:0}.status{min-width:190px;border-left:2px solid var(--orange);padding:7px 0 7px 14px;color:var(--muted);font-size:12px}.status strong{display:block;color:var(--text);font-size:14px;margin-bottom:3px}.grid{display:grid;gap:14px}.metrics{grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:14px}.metric,.panel{border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(165deg,rgba(22,34,50,.96),rgba(14,22,33,.96));box-shadow:0 10px 30px #00000012}.metric{padding:17px 18px}.metric .label{color:var(--muted);font-size:12px}.metric .value{font-size:25px;font-weight:700;letter-spacing:-.035em;margin:8px 0 4px}.metric .sub{font-size:11px;color:var(--muted)}.metric .sub b{color:var(--cyan);font-weight:600}.main-grid{grid-template-columns:minmax(0,1.55fr) minmax(300px,.85fr)}.panel{padding:19px;min-width:0}.panelhead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:17px}.panel h3{font-size:15px;margin:0;letter-spacing:-.01em}.subhead{font-size:12px;color:var(--muted);margin-top:4px}.tag{display:inline-block;font-size:10px;text-transform:uppercase;letter-spacing:.09em;border-radius:5px;border:1px solid #365e55;color:var(--cyan);padding:4px 7px}.map{height:310px;position:relative;overflow:hidden;border:1px solid #283b4e;border-radius:12px;background:#0c1621}.map svg{width:100%;height:100%;display:block}.maplabel{position:absolute;left:13px;top:12px;background:#0b121dcc;border:1px solid #34485d;border-radius:7px;padding:7px 10px;font-size:11px;color:#c6d6e8}.maplegend{display:flex;gap:15px;flex-wrap:wrap;color:var(--muted);font-size:11px;padding-top:12px}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}.mapnote{margin-top:13px;padding:12px 14px;background:#121f2c;border-radius:9px;border:1px solid #273c50;color:var(--muted);font-size:12px}.mapnote strong{color:var(--text)}.chart{width:100%;height:188px;display:block}.chart text{fill:#91a3b9;font-size:10px}.chart .gridline{stroke:#253448;stroke-width:1}.chart .line{fill:none;stroke:var(--cyan);stroke-width:2.5;stroke-linecap:round}.chart .area{fill:url(#area)}.empty{display:grid;place-items:center;text-align:center;min-height:145px;border:1px dashed #33455a;border-radius:10px;color:var(--muted);padding:18px}.empty strong{color:var(--text);display:block;margin-bottom:5px}.section{margin-top:14px}.tablewrap{overflow:auto}.table{width:100%;border-collapse:collapse;min-width:680px;text-align:left;font-size:12px}.table th{color:var(--muted);font-weight:600;padding:11px 10px;border-bottom:1px solid var(--line)}.table td{padding:13px 10px;border-bottom:1px solid #202c3c}.table tr:last-child td{border-bottom:0}.table .muted{color:var(--muted)}.state{display:inline-flex;align-items:center;gap:6px;border-radius:99px;padding:4px 8px;font-size:11px;background:#29251b;color:var(--orange)}.state::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor}.workflow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.step{border:1px solid var(--line);border-radius:11px;padding:14px;min-height:115px;background:#111a27}.stepnum{font-size:10px;color:var(--cyan);letter-spacing:.12em;font-weight:700}.step h4{font-size:13px;margin:8px 0 5px}.step p{margin:0;color:var(--muted);font-size:11px}.foot{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:22px;padding-top:17px;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}
+@media(max-width:900px){.main-grid{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.intro{align-items:flex-start;flex-direction:column}.status{min-width:auto}}@media(max-width:540px){.shell{padding:15px}.top{align-items:flex-start;flex-direction:column}.topright{justify-content:flex-start}.metrics{gap:9px}.metric{padding:13px}.metric .value{font-size:21px}.panel{padding:14px}.map{height:245px}.workflow{grid-template-columns:repeat(2,minmax(0,1fr))}.brand h1{font-size:17px}}
+</style>
+</head>
+<body>
+<div class="shell">
+<header class="top">
+  <div class="brand"><div class="logo" aria-hidden="true">⌁</div><div><div class="eyebrow">Field research platform</div><h1>RobotCore Telemetry</h1></div></div>
+  <div class="topright"><span class="pill">LoRa · GPS · IMU</span><span class="pill">Research console v0.1</span><span class="pill live">● Data not connected</span></div>
+</header>
+<section class="intro">
+  <div><div class="eyebrow">Communication-aware robotics</div><h2>Measure the link. Understand the space. Plan with evidence.</h2><p>A research workspace for location-referenced LoRa telemetry, measured coverage analysis, and future communication-aware robot navigation.</p></div>
+  <div class="status"><strong>Baseline workspace</strong>Dashboard scaffold only<br>Awaiting validated experiment data</div>
+</section>
+<section class="grid metrics" aria-label="Data readiness indicators">
+  <article class="metric"><div class="label">Validated experiments</div><div class="value">—</div><div class="sub">No dataset connected</div></article>
+  <article class="metric"><div class="label">Telemetry records</div><div class="value">—</div><div class="sub">Not yet ingested</div></article>
+  <article class="metric"><div class="label">Coverage map</div><div class="value">Pending</div><div class="sub">Measured points only</div></article>
+  <article class="metric"><div class="label">Link prediction</div><div class="value">Not evaluated</div><div class="sub">Requires validated field data</div></article>
+</section>
+<section class="grid main-grid">
+  <article class="panel">
+    <div class="panelhead"><div><h3>Spatial coverage workspace</h3><div class="subhead">Map surface reserved for verified GPS and radio measurements</div></div><span class="tag">Measurement first</span></div>
+    <div class="map" role="img" aria-label="Placeholder map grid; no GPS measurements have been loaded">
+      <svg viewBox="0 0 720 360" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+        <defs><pattern id="smallGrid" width="30" height="30" patternUnits="userSpaceOnUse"><path d="M30 0H0V30" fill="none" stroke="#1e3040" stroke-width="1"/></pattern><pattern id="bigGrid" width="150" height="150" patternUnits="userSpaceOnUse"><rect width="150" height="150" fill="url(#smallGrid)"/><path d="M150 0H0V150" fill="none" stroke="#263c4f" stroke-width="1.4"/></pattern></defs>
+        <rect width="720" height="360" fill="#0c1621"/><rect width="720" height="360" fill="url(#bigGrid)"/>
+        <path d="M-20 285 C75 247 92 222 177 235 S291 278 351 211 S475 120 543 143 S660 101 748 72" fill="none" stroke="#263f50" stroke-width="18" opacity=".65"/>
+        <path d="M-20 285 C75 247 92 222 177 235 S291 278 351 211 S475 120 543 143 S660 101 748 72" fill="none" stroke="#36586b" stroke-width="2" stroke-dasharray="7 8"/>
+        <path d="M90 -20 C124 54 180 82 192 145 S220 248 280 380" fill="none" stroke="#22394a" stroke-width="12"/>
+        <path d="M90 -20 C124 54 180 82 192 145 S220 248 280 380" fill="none" stroke="#324b5c" stroke-width="1.5" stroke-dasharray="5 6"/>
+        <text x="360" y="165" text-anchor="middle" fill="#6f879d" font-size="16" letter-spacing="2">NO MEASUREMENTS LOADED</text>
+        <text x="360" y="190" text-anchor="middle" fill="#536e85" font-size="11">Illustrative grid only — not a real map</text>
+        <path d="M684 26v27m-7-20 7-7 7 7" fill="none" stroke="#7f9bb4" stroke-width="1.5"/><text x="684" y="66" text-anchor="middle" fill="#7f9bb4" font-size="9">N</text>
+      </svg>
+      <div class="maplabel">Spatial workspace · no active experiment</div>
+    </div>
+    <div class="maplegend"><span><i class="dot" style="background:#65e0d4"></i>Measured samples (when loaded)</span><span><i class="dot" style="background:#f8bd70"></i>Low-confidence / flagged samples</span><span><i class="dot" style="background:#91a3b9"></i>Route / context</span></div>
+    <div class="mapnote"><strong>Integrity rule:</strong> measured samples, interpolated regions, and model predictions will be shown as distinct layers. No synthetic data is displayed as an experiment.</div>
+  </article>
+  <article class="panel">
+    <div class="panelhead"><div><h3>Link quality over time</h3><div class="subhead">RSSI / SNR chart placeholder</div></div><span class="pill">No session</span></div>
+    <div class="empty"><div><strong>Awaiting telemetry</strong>Connect a receiver session or import a validated dataset to display real RSSI, SNR, sequence gaps, and timing.</div></div>
+    <div class="panelhead" style="margin-top:22px"><div><h3>Research readiness</h3><div class="subhead">Next validation gates</div></div></div>
+    <svg class="chart" viewBox="0 0 440 188" role="img" aria-label="Illustrative readiness scale, not measured data">
+      <defs><linearGradient id="area" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#65e0d4" stop-opacity=".2"/><stop offset="1" stop-color="#65e0d4" stop-opacity="0"/></linearGradient></defs>
+      <path class="gridline" d="M36 24H420M36 64H420M36 104H420M36 144H420"/>
+      <text x="8" y="27">M3</text><text x="8" y="67">M2</text><text x="8" y="107">M1</text><text x="8" y="147">M0</text>
+      <path d="M36 144H130V104H226V64H322V24H420" fill="none" stroke="#354d64" stroke-width="3" stroke-dasharray="4 5"/>
+      <circle cx="36" cy="144" r="4" fill="#f8bd70"/><circle cx="130" cy="104" r="4" fill="#405971"/><circle cx="226" cy="64" r="4" fill="#405971"/><circle cx="322" cy="24" r="4" fill="#405971"/>
+      <text x="36" y="174">Audit</text><text x="130" y="174" text-anchor="middle">Validate</text><text x="226" y="174" text-anchor="middle">Map</text><text x="322" y="174" text-anchor="middle">Model</text><text x="420" y="174" text-anchor="end">Plan</text>
+    </svg>
+    <div class="subhead">Milestone sketch only. It does not represent measured progress or model performance.</div>
+  </article>
+</section>
+<section class="panel section">
+  <div class="panelhead"><div><h3>Experiment registry</h3><div class="subhead">The table will list imported runs and their data-quality status</div></div><span class="pill">0 connected</span></div>
+  <div class="tablewrap"><table class="table"><thead><tr><th>Experiment</th><th>Session</th><th>Radio profile</th><th>Data checks</th><th>Records</th><th>Status</th></tr></thead><tbody><tr><td colspan="6"><div class="empty"><div><strong>No experiments registered</strong>Import a manifest and validate its corresponding telemetry files to populate this registry.</div></div></td></tr></tbody></table></div>
+</section>
+<section class="panel section">
+  <div class="panelhead"><div><h3>Research pipeline</h3><div class="subhead">The order of work is designed to protect reproducibility</div></div></div>
+  <div class="workflow">
+    <article class="step"><div class="stepnum">MILESTONE 01</div><h4>Protocol verification</h4><p>Golden packet tests, CRC, sequencing, and transmitter/receiver compatibility.</p></article>
+    <article class="step"><div class="stepnum">MILESTONE 02</div><h4>Data quality</h4><p>Time semantics, GPS validity, sequence gaps, radio settings, and provenance.</p></article>
+    <article class="step"><div class="stepnum">MILESTONE 03</div><h4>Measured coverage</h4><p>Map observed tracks, RSSI/SNR, and packet delivery with quality flags.</p></article>
+    <article class="step"><div class="stepnum">MILESTONE 04</div><h4>Prediction & planning</h4><p>Evaluate spatial models and route objectives against explicit baselines.</p></article>
+  </div>
+</section>
+<footer class="foot"><span>RobotCore Telemetry · Research scaffold v0.1</span><span><a href="https://github.com/lalitkumar790/robotcore-telemetry">Source repository</a> · No live telemetry backend connected</span><span>Data privacy: raw GPS tracks stay private by default.</span></footer>
+</div>
+</body>
+</html>
