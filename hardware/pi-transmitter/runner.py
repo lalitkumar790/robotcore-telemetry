@@ -19,6 +19,10 @@ def parse_args():
     parser.add_argument("--gps-port", help="explicit GPS serial device; overrides ROBOTCORE_GPS_PORT")
     parser.add_argument("--lora-port", help="explicit LoRa-E5 serial device; overrides ROBOTCORE_LORA_PORT")
     parser.add_argument("--list-devices", action="store_true", help="list USB serial devices and exit")
+    parser.add_argument(
+        "--require-lora", action="store_true",
+        help="abort if the LoRa transmitter is not detected (recommended for unattended field runs)",
+    )
     parser.add_argument("--interval", type=float, default=TX_INTERVAL, help="seconds between samples")
     parser.add_argument(
         "--imu-startup-timeout", type=float, default=90.0,
@@ -51,6 +55,8 @@ def main() -> int:
     try:
         lora_port = select_serial_port("lora", exclude={gps_port})
     except Exception as error:
+        if args.require_lora:
+            raise SystemExit(f"[LoRa] Required transmitter port unavailable; refusing a radio-less field run: {error}")
         # GPS+IMU recording remains valuable even when the TX radio is missing
         # or Windows/Linux USB discovery cannot safely identify it. Never
         # pretend a packet was transmitted; manifest and sidecar record absence.
