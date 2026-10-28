@@ -41,16 +41,25 @@ def main() -> int:
     print("=" * 72)
     print_serial_candidates()
     gps_port = select_serial_port("gps")
-    lora_port = select_serial_port("lora", exclude={gps_port})
+    try:
+        lora_port = select_serial_port("lora", exclude={gps_port})
+    except Exception as error:
+        # GPS+IMU recording remains valuable even when the TX radio is missing
+        # or Windows/Linux USB discovery cannot safely identify it. Never
+        # pretend a packet was transmitted; manifest and sidecar record absence.
+        lora_port = "UNAVAILABLE"
+        print(f"[LoRa] Transmitter port unavailable: {error}")
+        print("[LoRa] Continuing with local mission recording only; no radio TX will be attempted.")
+
     print(f"[GPS] Selected {gps_port}")
     print(f"[LoRa] Selected {lora_port}")
     print("[IMU] Starting WT901BLE68 scan/reconnect loop in background")
 
     radio_config = RadioConfig()
-    gps = GPS(gps_port, other_port=lora_port)
+    gps = GPS(gps_port, other_port=None if lora_port == "UNAVAILABLE" else lora_port)
     imu = WitMotion()
     try:
-        lora = LoRaE5(lora_port, radio_config)
+        lora = LoRaE5(lora_port, radio_config) if lora_port != "UNAVAILABLE" else None
     except Exception as error:
         lora = None
         print(f"[LoRa] Could not open transmitter port; local mission capture continues: {error}")
