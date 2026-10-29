@@ -270,9 +270,6 @@ class ReceiverWorker(threading.Thread):
         # Consume them exactly once so a malformed/absent metadata line cannot reuse stale values.
         rssi, snr = self._pending_rssi, self._pending_snr
         self._pending_rssi, self._pending_snr = None, None
-        with self.lock:
-            if self.managed_sessions and not self.capture_active:
-                return
         try:
             record = decode_packet(payload)
         except ValueError as error:
