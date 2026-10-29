@@ -96,6 +96,7 @@ ExecStart=$VENV_PYTHON $PI_DIR/field_agent.py --host 0.0.0.0 --port 8766
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGTERM
+KillMode=mixed
 TimeoutStopSec=50
 UMask=0077
 NoNewPrivileges=true
