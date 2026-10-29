@@ -3,14 +3,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hmac
+import ipaddress
 import os
+import re
 import secrets
+import socket
 import threading
+from urllib.parse import urlsplit
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 import uvicorn
 
 from receiver import ReceiverWorker, select_receiver_port, list_ports_text
@@ -23,9 +29,58 @@ RADIO_DEFAULTS = {
     "rx_preamble": 15,
     "power_dbm": 14,
 }
+LAN_ORIGIN_REGEX = r"^http://(?:localhost|127\\.0\\.0\\.1|10(?:\\.\\d{1,3}){3}|192\\.168(?:\\.\\d{1,3}){2}|172\\.(?:1[6-9]|2[0-9]|3[01])(?:\\.\\d{1,3}){2}|[A-Za-z0-9.-]+\\.local)(?::\\d+)?$"
+FIELD_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$")
 
 
-def create_app(port: str, log_dir: str, token: str, allowed_origins: set[str], radio: dict | None = None, experiment_id: str = "UNLABELLED") -> FastAPI:
+class FieldSessionRequest(BaseModel):
+    experiment_id: str = Field(min_length=3, max_length=80)
+    session_id: str = Field(min_length=3, max_length=80)
+
+
+def _is_lan_origin(origin: str) -> bool:
+    try:
+        parsed = urlsplit(origin)
+        if parsed.scheme != "http" or not parsed.hostname:
+            return False
+        host = parsed.hostname.lower()
+        if host == "localhost" or host.endswith(".local"):
+            return True
+        address = ipaddress.ip_address(host)
+        return address.is_private or address.is_loopback or address.is_link_local
+    except ValueError:
+        return False
+
+
+def _authorized(header: str | None, token: str) -> bool:
+    value = (header or "").strip()
+    if value.lower().startswith("bearer "):
+        value = value[7:].strip()
+    return bool(value) and hmac.compare_digest(value, token)
+
+
+def _lan_ipv4_addresses() -> list[str]:
+    found = set()
+    try:
+        for item in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_STREAM):
+            address = item[4][0]
+            if not ipaddress.ip_address(address).is_loopback and not ipaddress.ip_address(address).is_link_local:
+                found.add(address)
+    except Exception:
+        pass
+    return sorted(found)
+
+
+def create_app(
+    port: str,
+    log_dir: str,
+    token: str,
+    allowed_origins: set[str],
+    radio: dict | None = None,
+    experiment_id: str = "UNLABELLED",
+    managed_sessions: bool = False,
+    allow_lan_origins: bool = False,
+) -> FastAPI:
     radio_config = dict(RADIO_DEFAULTS)
     if radio:
         radio_config.update(radio)
@@ -77,7 +132,12 @@ def create_app(port: str, log_dir: str, token: str, allowed_origins: set[str], r
             "experiment_id": experiment_id,
             "packets_received": 0, "packets_lost": 0, "packets_corrupt": 0, "pdr": None,
         }
-        status.update({"read_only": True, "radio_config": radio_config})
+        status.update({
+            "read_only": True,
+            "session_control_api": True,
+            "managed_sessions": managed_sessions,
+            "radio_config": radio_config,
+        })
         return status
 
     async def broadcast_status() -> None:
@@ -95,6 +155,7 @@ def create_app(port: str, log_dir: str, token: str, allowed_origins: set[str], r
             port=port, log_dir=log_dir, radio=radio_config,
             on_packet=packet_callback, on_status=status_callback,
             experiment_id=experiment_id,
+            managed_sessions=managed_sessions,
         )
         worker_holder["worker"] = worker
         worker.start()
@@ -119,11 +180,71 @@ def create_app(port: str, log_dir: str, token: str, allowed_origins: set[str], r
         openapi_url=None,
         lifespan=lifespan,
     )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=sorted(allowed_origins),
+        allow_origin_regex=LAN_ORIGIN_REGEX if allow_lan_origins else None,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-RobotCore-Token"],
+        allow_credentials=False,
+    )
+
+    def require_control_token(authorization: str | None, x_robotcore_token: str | None = None) -> None:
+        supplied = authorization or x_robotcore_token
+        if not _authorized(supplied, token):
+            raise HTTPException(status_code=401, detail="Invalid laptop bridge token.")
+
+    @app.get("/api/status")
+    def api_status(
+        authorization: str | None = Header(default=None),
+        x_robotcore_token: str | None = Header(default=None),
+    ) -> dict:
+        require_control_token(authorization, x_robotcore_token)
+        return get_status()
+
+    @app.post("/api/session/start")
+    def start_field_session(
+        body: FieldSessionRequest,
+        authorization: str | None = Header(default=None),
+        x_robotcore_token: str | None = Header(default=None),
+    ) -> dict:
+        require_control_token(authorization, x_robotcore_token)
+        if not FIELD_ID_RE.fullmatch(body.experiment_id) or not FIELD_ID_RE.fullmatch(body.session_id):
+            raise HTTPException(status_code=422, detail="Invalid experiment/session ID.")
+        worker = worker_holder.get("worker")
+        if worker is None:
+            raise HTTPException(status_code=503, detail="Receiver worker is not running.")
+        status = worker.status()
+        if not status.get("serial_connected") or not status.get("radio_configured"):
+            raise HTTPException(status_code=409, detail={
+                "message": "Laptop receiver is not ready; check serial and radio configuration.",
+                "status": status,
+            })
+        try:
+            return worker.begin_field_session(body.experiment_id, body.session_id)
+        except (RuntimeError, FileExistsError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.post("/api/session/stop")
+    def stop_field_session(
+        body: dict | None = Body(default=None),
+        authorization: str | None = Header(default=None),
+        x_robotcore_token: str | None = Header(default=None),
+    ) -> dict:
+        require_control_token(authorization, x_robotcore_token)
+        worker = worker_holder.get("worker")
+        if worker is None:
+            raise HTTPException(status_code=503, detail="Receiver worker is not running.")
+        status = worker.status()
+        requested = (body or {}).get("session_id")
+        if requested and status.get("field_session_id") and requested != status.get("field_session_id"):
+            raise HTTPException(status_code=409, detail="Requested session does not match the active receiver session.")
+        return worker.end_field_session()
 
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):
         origin = (ws.headers.get("origin") or "").rstrip("/")
-        if origin not in allowed_origins:
+        if origin not in allowed_origins and not (allow_lan_origins and _is_lan_origin(origin)):
             await ws.close(code=4403, reason="Origin not allowed")
             return
         await ws.accept()
@@ -142,7 +263,7 @@ def create_app(port: str, log_dir: str, token: str, allowed_origins: set[str], r
             authenticated = True
             async with clients_lock:
                 clients.add(ws)
-            await ws.send_json({"type": "auth_ok", "read_only": True})
+            await ws.send_json({"type": "auth_ok", "read_only": True, "session_control_api": True})
             await ws.send_json({"type": "status", "data": get_status()})
 
             # Keep the authenticated connection alive and answer browser pings.
@@ -165,7 +286,9 @@ def create_app(port: str, log_dir: str, token: str, allowed_origins: set[str], r
 def parse_args():
     parser = argparse.ArgumentParser(description="Authenticated read-only RobotCore laptop receiver bridge")
     parser.add_argument("--port", help="LoRa-E5 RX serial port, e.g. COM8; default from ROBOTCORE_RX_PORT or known USB ID")
-    parser.add_argument("--host", default="127.0.0.1", help="bind address; keep loopback when using cloudflared (default 127.0.0.1)")
+    parser.add_argument("--host", default="127.0.0.1", help="bind address; use 0.0.0.0 only for an authenticated private-LAN setup")
+    parser.add_argument("--managed-sessions", action="store_true", help="only write receiver CSV while a field session is active; start/stop via authenticated API")
+    parser.add_argument("--allow-lan-origins", action="store_true", help="allow HTTP origins on private LAN IPs for the local Pi-served console")
     parser.add_argument("--listen-port", type=int, default=8765)
     parser.add_argument("--logs", default=os.getenv("ROBOTCORE_RX_LOG_DIR", "logs"))
     parser.add_argument("--experiment-id", default=os.getenv("ROBOTCORE_EXPERIMENT_ID", "UNLABELLED"))
@@ -175,6 +298,8 @@ def parse_args():
 
 def main() -> None:
     args = parse_args()
+    if args.allow_lan_origins and args.host not in {"0.0.0.0", "::"}:
+        raise SystemExit("--allow-lan-origins requires --host 0.0.0.0 (or ::) so the phone can reach this laptop.")
     try:
         port = select_receiver_port(args.port)
     except Exception as error:
@@ -193,12 +318,21 @@ def main() -> None:
     print(f"[RX] Experiment ID: {args.experiment_id}")
     print(f"[RX] Allowed web origins: {', '.join(sorted(origins))}")
     print(f"[RX] Local web socket: ws://127.0.0.1:{args.listen_port}/ws")
-    print(f"[RX] Bridge token (copy into Device status on your phone; do not share): {token}")
-    print("[SECURITY] Token is generated for this run and stays in memory. No telemetry API or remote write controls are exposed.")
+    if args.allow_lan_origins:
+        for address in _lan_ipv4_addresses():
+            print(f"[RX] Private-LAN API: http://{address}:{args.listen_port}/api/status")
+    print(f"[RX] Bridge token (copy into the local Field Console; do not share): {token}")
+    print(f"[RX] Session mode: {'dashboard-managed' if args.managed_sessions else 'legacy always-log'}")
+    print("[SECURITY] Token is generated for this run and stays in memory. Session start/stop API requests require it.")
     print("[SECURITY] Stop any desktop GUI/receiver process that is using this same serial port before continuing.")
     print("=" * 72, flush=True)
-    app = create_app(port, args.logs, token, origins, experiment_id=args.experiment_id)
-    uvicorn.run(app, host=args.host, port=args.listen_port, log_level="warning", access_log=False)
+    app = create_app(
+        port, args.logs, token, origins,
+        experiment_id=args.experiment_id,
+        managed_sessions=args.managed_sessions,
+        allow_lan_origins=args.allow_lan_origins,
+    )
+    uvicorn.run(app, host=args.host, port=args.listen_port, log_level="info" if args.allow_lan_origins else "warning", access_log=False)
 
 
 if __name__ == "__main__":
