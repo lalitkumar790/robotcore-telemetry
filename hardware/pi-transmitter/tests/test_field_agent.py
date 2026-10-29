@@ -1,4 +1,9 @@
+import sys
 import unittest
+from pathlib import Path
+
+# unittest discovery starts with the tests folder on sys.path, not the source folder.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from field_agent import valid_id
 
