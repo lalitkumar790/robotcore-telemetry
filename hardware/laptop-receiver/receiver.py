@@ -225,8 +225,9 @@ class ReceiverWorker(threading.Thread):
             self.last_error = None
             self._pending_rssi = None
             self._pending_snr = None
-            self.capture_active = True
+            self.capture_active = False
             self._prepare_log()
+            self.capture_active = True
             return self.status()
 
     def end_field_session(self) -> dict:
