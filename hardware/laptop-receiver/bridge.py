@@ -80,6 +80,7 @@ def create_app(
     experiment_id: str = "UNLABELLED",
     managed_sessions: bool = False,
     allow_lan_origins: bool = False,
+    auto_detect_port: bool = False,
 ) -> FastAPI:
     radio_config = dict(RADIO_DEFAULTS)
     if radio:
@@ -156,6 +157,7 @@ def create_app(
             on_packet=packet_callback, on_status=status_callback,
             experiment_id=experiment_id,
             managed_sessions=managed_sessions,
+            auto_detect_port=auto_detect_port,
         )
         worker_holder["worker"] = worker
         worker.start()
@@ -331,6 +333,7 @@ def main() -> None:
         experiment_id=args.experiment_id,
         managed_sessions=args.managed_sessions,
         allow_lan_origins=args.allow_lan_origins,
+        auto_detect_port=not args.port and not os.getenv("ROBOTCORE_RX_PORT", "").strip(),
     )
     uvicorn.run(app, host=args.host, port=args.listen_port, log_level="info" if args.allow_lan_origins else "warning", access_log=False)
 
