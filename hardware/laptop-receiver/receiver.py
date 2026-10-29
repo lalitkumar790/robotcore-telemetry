@@ -58,11 +58,12 @@ def utc_iso() -> str:
 class ReceiverWorker(threading.Thread):
     """Single owner of the laptop receiver serial port, CSV log and packet stream."""
 
-    def __init__(self, port: str, log_dir: str, radio: dict, on_packet: Callable[[dict], None], on_status: Callable[[], None], experiment_id: str | None = None, managed_sessions: bool = False):
+    def __init__(self, port: str, log_dir: str, radio: dict, on_packet: Callable[[dict], None], on_status: Callable[[], None], experiment_id: str | None = None, managed_sessions: bool = False, auto_detect_port: bool = False):
         super().__init__(daemon=True, name="RobotCoreRadioReceiver")
         self.port_name = port
         self.experiment_id = (experiment_id or EXPERIMENT_ID or "UNLABELLED").strip()
         self.managed_sessions = managed_sessions
+        self.auto_detect_port = auto_detect_port
         self.capture_active = not managed_sessions
         self.field_session_id: str | None = None
         self.log_dir = Path(log_dir).expanduser().resolve()
@@ -358,6 +359,13 @@ class ReceiverWorker(threading.Thread):
         # observing status while the receiver retries every two seconds.
         while not self.stop_event.is_set():
             try:
+                if self.auto_detect_port:
+                    detected_port = select_receiver_port()
+                    if detected_port != self.port_name:
+                        with self.lock:
+                            self.port_name = detected_port
+                            self.last_error = "LoRa-E5 re-detected on " + detected_port
+                        self._status_changed()
                 self.serial_port = serial.Serial(
                     self.port_name, baudrate=9600, timeout=0.25, write_timeout=2.0
                 )
