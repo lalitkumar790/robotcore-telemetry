@@ -23,8 +23,9 @@ function openLocalFieldConsole(){
  if(u.pathname!=="/field-console"){toast("Use the local /field-console path.",true);return;}
  field.value=u.toString();try{localStorage.setItem("robotcore-pi-field-console-url",field.value);}catch(_){}
  hint.textContent="Opening local Pi console…";
- const tab=window.open(field.value,"_blank","noopener");
+ const tab=window.open(field.value,"_blank");
  if(!tab){hint.textContent="Popup blocked · copy the URL into a new tab";toast("Popup blocked. Copy the local URL and open it in a new tab.",true);return;}
+ try{tab.opener=null;}catch(_){}
  toast("Opening the Pi-local Field Console. It only works while your phone can reach the Pi on the local network.");
 }
 function toast(msg,error){const e=$("toast");e.textContent=msg;e.classList.toggle("error",!!error);e.classList.add("show");clearTimeout(S.toastTimer);S.toastTimer=setTimeout(()=>e.classList.remove("show"),4200);}
