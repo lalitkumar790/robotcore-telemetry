@@ -58,16 +58,19 @@ def utc_iso() -> str:
 class ReceiverWorker(threading.Thread):
     """Single owner of the laptop receiver serial port, CSV log and packet stream."""
 
-    def __init__(self, port: str, log_dir: str, radio: dict, on_packet: Callable[[dict], None], on_status: Callable[[], None], experiment_id: str | None = None):
+    def __init__(self, port: str, log_dir: str, radio: dict, on_packet: Callable[[dict], None], on_status: Callable[[], None], experiment_id: str | None = None, managed_sessions: bool = False):
         super().__init__(daemon=True, name="RobotCoreRadioReceiver")
         self.port_name = port
         self.experiment_id = (experiment_id or EXPERIMENT_ID or "UNLABELLED").strip()
+        self.managed_sessions = managed_sessions
+        self.capture_active = not managed_sessions
+        self.field_session_id: str | None = None
         self.log_dir = Path(log_dir).expanduser().resolve()
         self.radio = dict(radio)
         self.on_packet = on_packet
         self.on_status = on_status
         self.stop_event = threading.Event()
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.serial_port = None
         self.serial_connected = False
         self.radio_configured = False
@@ -168,11 +171,24 @@ class ReceiverWorker(threading.Thread):
 
     def _prepare_log(self) -> None:
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        if self._csv_file is not None:
+            try:
+                self._csv_file.flush()
+                self._csv_file.close()
+            except Exception:
+                pass
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.log_path = self.log_dir / f"receiver_{stamp}.csv"
+        safe = lambda value: re.sub(r"[^A-Za-z0-9._-]+", "-", value or "").strip("._-")[:80] or "session"
+        if self.field_session_id:
+            self.log_path = self.log_dir / f"receiver_{safe(self.experiment_id)}_{safe(self.field_session_id)}.csv"
+        else:
+            self.log_path = self.log_dir / f"receiver_{stamp}.csv"
+        if self.log_path.exists():
+            # A session ID is a unique run identifier; never append into an older file with the same name.
+            raise FileExistsError(f"Receiver log already exists for this session: {self.log_path.name}")
         self._csv_file = self.log_path.open("w", newline="", encoding="utf-8")
         fields = [
-            "RX Time UTC", "RX Epoch ms", "Experiment ID", "RX Session ID",
+            "RX Time UTC", "RX Epoch ms", "Experiment ID", "RX Session ID", "Field Session ID",
             "Sequence", "Protocol", "Latitude", "Longitude", "Speed (km/h)",
             "RSSI (dBm)", "SNR (dB)", "Lost Before", "Out Of Order",
             "CRC Valid", "Packets Received", "Packets Lost", "Packets Corrupt",
@@ -184,6 +200,42 @@ class ReceiverWorker(threading.Thread):
         self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=fields, extrasaction="ignore")
         self._csv_writer.writeheader()
         self._csv_file.flush()
+
+    def begin_field_session(self, experiment_id: str, session_id: str) -> dict:
+        with self.lock:
+            if self.capture_active and self.field_session_id:
+                raise RuntimeError(f"Field session {self.field_session_id} is already recording.")
+            self.experiment_id = experiment_id
+            self.field_session_id = session_id
+            self.packets_received = 0
+            self.packets_lost = 0
+            self.packets_corrupt = 0
+            self.packets_duplicate = 0
+            self.packets_out_of_order = 0
+            self.sequence_resets_suspected = 0
+            self.last_sequence = None
+            self.source_index = 0
+            self.last_packet_unix_ms = None
+            self.last_rssi = None
+            self.last_snr = None
+            self.last_error = None
+            self._pending_rssi = None
+            self._pending_snr = None
+            self.capture_active = True
+            self._prepare_log()
+            return self.status()
+
+    def end_field_session(self) -> dict:
+        with self.lock:
+            self.capture_active = False
+            if self._csv_file is not None:
+                try:
+                    self._csv_file.flush()
+                    self._csv_file.close()
+                finally:
+                    self._csv_file = None
+                    self._csv_writer = None
+            return self.status()
 
     def _record_sequence(self, sequence: int) -> tuple[int, bool, bool]:
         with self.lock:
@@ -232,8 +284,8 @@ class ReceiverWorker(threading.Thread):
             self.source_index += 1
             source_index = self.source_index
             self.last_packet_unix_ms = now_ms
-            self.last_rssi = self._pending_rssi
-            self.last_snr = self._pending_snr
+            self.last_rssi = rssi
+            self.last_snr = snr
             self.last_error = None
             received_count = self.packets_received
             lost_count = self.packets_lost
@@ -259,30 +311,32 @@ class ReceiverWorker(threading.Thread):
             "rxSessionId": self.session_id,
             "experimentId": self.experiment_id,
         })
-        if self._csv_writer is not None:
-            row = {
-                "RX Time UTC": received["receivedAtUtc"], "RX Epoch ms": now_ms,
-                "Experiment ID": self.experiment_id, "RX Session ID": self.session_id,
-                "Sequence": record["sequence"], "Protocol": record["protocol"],
-                "Latitude": record["latitude"], "Longitude": record["longitude"],
-                "Speed (km/h)": record["speed"], "RSSI (dBm)": rssi if rssi is not None else "",
-                "SNR (dB)": snr if snr is not None else "",
-                "Lost Before": lost_before, "Out Of Order": int(out_of_order), "CRC Valid": 1,
-                "Packets Received": received_count, "Packets Lost": lost_count, "Packets Corrupt": corrupt_count,
-                "PDR (%)": round(pdr, 3) if pdr is not None else "",
-                "IMU Fields Present": int(bool(record["imuPresent"])), "IMU Health": record.get("imu_health", ""),
-                "Roll (deg)": record["roll"] if record["roll"] is not None else "",
-                "Pitch (deg)": record["pitch"] if record["pitch"] is not None else "",
-                "Yaw (deg)": record["yaw"] if record["yaw"] is not None else "",
-                "AccelX (g)": record["ax"] if record["ax"] is not None else "",
-                "AccelY (g)": record["ay"] if record["ay"] is not None else "",
-                "AccelZ (g)": record["az"] if record["az"] is not None else "",
-                "GyroX (deg/s)": record["gx"] if record["gx"] is not None else "",
-                "GyroY (deg/s)": record["gy"] if record["gy"] is not None else "",
-                "GyroZ (deg/s)": record["gz"] if record["gz"] is not None else "",
-            }
-            self._csv_writer.writerow(row)
-            self._csv_file.flush()
+        with self.lock:
+            if self._csv_writer is not None and self.capture_active:
+                row = {
+                    "RX Time UTC": received["receivedAtUtc"], "RX Epoch ms": now_ms,
+                    "Experiment ID": self.experiment_id, "RX Session ID": self.session_id,
+                    "Field Session ID": self.field_session_id or "",
+                    "Sequence": record["sequence"], "Protocol": record["protocol"],
+                    "Latitude": record["latitude"], "Longitude": record["longitude"],
+                    "Speed (km/h)": record["speed"], "RSSI (dBm)": rssi if rssi is not None else "",
+                    "SNR (dB)": snr if snr is not None else "",
+                    "Lost Before": lost_before, "Out Of Order": int(out_of_order), "CRC Valid": 1,
+                    "Packets Received": received_count, "Packets Lost": lost_count, "Packets Corrupt": corrupt_count,
+                    "PDR (%)": round(pdr, 3) if pdr is not None else "",
+                    "IMU Fields Present": int(bool(record["imuPresent"])), "IMU Health": record.get("imu_health", ""),
+                    "Roll (deg)": record["roll"] if record["roll"] is not None else "",
+                    "Pitch (deg)": record["pitch"] if record["pitch"] is not None else "",
+                    "Yaw (deg)": record["yaw"] if record["yaw"] is not None else "",
+                    "AccelX (g)": record["ax"] if record["ax"] is not None else "",
+                    "AccelY (g)": record["ay"] if record["ay"] is not None else "",
+                    "AccelZ (g)": record["az"] if record["az"] is not None else "",
+                    "GyroX (deg/s)": record["gx"] if record["gx"] is not None else "",
+                    "GyroY (deg/s)": record["gy"] if record["gy"] is not None else "",
+                    "GyroZ (deg/s)": record["gz"] if record["gz"] is not None else "",
+                }
+                self._csv_writer.writerow(row)
+                self._csv_file.flush()
         try:
             self.on_packet(received)
         except Exception as error:
@@ -291,7 +345,8 @@ class ReceiverWorker(threading.Thread):
         self._status_changed()
 
     def run(self) -> None:
-        self._prepare_log()
+        if not self.managed_sessions:
+            self._prepare_log()
         # Keep the bridge alive and the CSV open if the USB radio is briefly
         # unplugged or Windows resets the COM port. The phone can continue
         # observing status while the receiver retries every two seconds.
