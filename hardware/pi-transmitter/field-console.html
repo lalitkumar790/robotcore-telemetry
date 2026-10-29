@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>RobotCore · Field Console</title>
+<style>
+:root{color-scheme:dark;--bg:#07101a;--panel:#101c29;--panel2:#0b1520;--line:#26394d;--text:#e6f0fa;--muted:#93a9bd;--cyan:#65e0d4;--green:#4cdb91;--amber:#ffc36e;--red:#ff8392}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 12% 0%,#153248 0,transparent 45%),var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+main{width:min(1120px,100%);margin:auto;padding:20px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding:5px 0 18px}.brand{display:flex;align-items:center;gap:12px}.logo{width:44px;height:44px;display:grid;place-items:center;border:1px solid #3e667d;border-radius:13px;background:#142a3b;color:var(--cyan);font-size:22px}.eyebrow{color:var(--cyan);text-transform:uppercase;font-size:10px;font-weight:750;letter-spacing:.15em}.title{font-size:23px;font-weight:750;letter-spacing:-.04em}.muted{color:var(--muted)}.pill{border:1px solid var(--line);border-radius:99px;padding:7px 11px;color:var(--muted);font-size:11px}.pill.ready{color:var(--green);border-color:#286d50}.pill.warn{color:var(--amber);border-color:#73562e}.pill.bad{color:var(--red);border-color:#75404a}
+.hero{padding:23px 0 17px}.hero h1{font-size:clamp(25px,5vw,38px);line-height:1.1;margin:6px 0 10px;letter-spacing:-.045em}.hero p{max-width:800px;color:var(--muted);margin:0}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.panel{background:linear-gradient(160deg,#122131f2,#0c1722f5);border:1px solid var(--line);border-radius:15px;padding:16px;min-width:0}.panel h2{font-size:15px;margin:0 0 5px}.panel p{font-size:12px;color:var(--muted);margin:0 0 12px}.wide{margin-top:12px}.device{border:1px solid var(--line);background:var(--panel2);border-radius:11px;padding:12px;min-width:0}.devicehead{display:flex;justify-content:space-between;align-items:center;gap:8px}.devicehead b{font-size:13px}.status{font-size:10px;white-space:nowrap;border:1px solid #3a5064;border-radius:99px;padding:3px 7px;color:var(--muted)}.status.ready{color:var(--green);border-color:#286d50}.status.warn{color:var(--amber);border-color:#73562e}.status.bad{color:var(--red);border-color:#75404a}.detail{font-size:11px;color:var(--muted);margin-top:8px;overflow-wrap:anywhere}.devices{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:14px}
+.fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}.field{display:grid;gap:6px;min-width:0}.field label{font-size:11px;color:var(--muted)}input{width:100%;min-width:0;border:1px solid #344c62;border-radius:9px;background:#07121d;color:var(--text);padding:11px 12px;font:inherit;font-size:13px}input:focus{outline:2px solid #3b9ca0;outline-offset:1px}input::placeholder{color:#647b91}.actions{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}button,.linkbtn{border:1px solid #3a6178;border-radius:9px;padding:10px 13px;background:#173247;color:var(--text);font-weight:700;font-size:12px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:7px}button:hover,.linkbtn:hover{border-color:var(--cyan);background:#203e53}button.secondary,.linkbtn.secondary{border-color:var(--line);background:#0d1925;color:var(--muted)}button.danger{border-color:#75404a;background:#301a22;color:#ffdbe0}button:disabled{opacity:.38;cursor:not-allowed}.msg{font-size:12px;color:var(--muted);margin-top:10px;overflow-wrap:anywhere}.msg.good{color:var(--green)}.msg.warn{color:var(--amber)}.msg.error{color:var(--red)}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-top:13px}.metric{border:1px solid var(--line);background:#0a1520;border-radius:10px;padding:11px}.metric span{display:block;font-size:10px;color:var(--muted)}.metric strong{display:block;font-size:20px;margin-top:4px;overflow-wrap:anywhere}.runmeta{display:flex;gap:9px;flex-wrap:wrap;margin:11px 0}.runmeta span{font-size:11px;color:var(--muted);background:#0a1520;border:1px solid var(--line);border-radius:8px;padding:7px 9px;overflow-wrap:anywhere}.log{background:#06101a;border:1px solid #1e3143;border-radius:10px;padding:12px;max-height:260px;overflow:auto;white-space:pre-wrap;font:11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;color:#b4c9da}.note{background:#101f2d;border:1px solid #2d465b;border-radius:11px;padding:12px;color:var(--muted);font-size:11px;margin-top:12px}.note strong{color:var(--text)}footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:18px 0;color:var(--muted);font-size:10px}
+@media(max-width:760px){main{padding:13px}.grid{grid-template-columns:1fr}.devices{grid-template-columns:1fr}.fields{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.title{font-size:20px}.hero{padding-top:19px}.panel{padding:13px}}
+</style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <div class="brand"><div class="logo">⌁</div><div><div class="eyebrow">RobotCore · MANIT Bhopal</div><div class="title">Field Session Console</div></div></div>
+    <span class="pill" id="overallPill">Not checked</span>
+  </header>
+  <section class="hero">
+    <div class="eyebrow">One session · both ends · one name</div>
+    <h1>Check. Start. Walk. Stop.</h1>
+    <p>This local console checks the Pi sensors, starts the Pi mission and laptop receiver capture with the same experiment/session IDs, and shows retries and files as they appear. It works on your local network; no Cloudflare tunnel is required.</p>
+  </section>
+
+  <section class="grid">
+    <article class="panel">
+      <h2>01 · Check the Raspberry Pi</h2>
+      <p>USB adapters and WitMotion BLE discovery. A GPS fix and fresh IMU sample are verified again at startup.</p>
+      <button id="checkBtn">Run preflight checks</button>
+      <div id="piChecks" class="devices">
+        <div class="device"><div class="devicehead"><b>GPS USB</b><span class="status">Not checked</span></div><div class="detail">Checks the adapter and selected port.</div></div>
+        <div class="device"><div class="devicehead"><b>LoRa-E5 TX</b><span class="status">Not checked</span></div><div class="detail">Checks the radio adapter.</div></div>
+        <div class="device"><div class="devicehead"><b>WT901BLE68</b><span class="status">Not checked</span></div><div class="detail">Scans for the IMU.</div></div>
+      </div>
+      <div id="preflightMessage" class="msg">Run checks before starting a session.</div>
+    </article>
+
+    <article class="panel">
+      <h2>02 · Pair the laptop receiver</h2>
+      <p>Use the LAN address printed by the laptop field-station window, not a trycloudflare URL. The laptop and phone must be able to reach each other locally.</p>
+      <div class="field"><label for="receiverUrl">Laptop receiver URL</label><input id="receiverUrl" type="url" placeholder="http://192.168.1.20:8765" inputmode="url"></div>
+      <div class="field" style="margin-top:10px"><label for="receiverToken">Laptop bridge token</label><input id="receiverToken" type="password" placeholder="Paste token from laptop console" autocomplete="off"></div>
+      <div class="actions"><button id="checkReceiverBtn" class="secondary">Check receiver</button><span id="receiverPill" class="pill">Not connected</span></div>
+      <div id="receiverMessage" class="msg">Bridge should report serial connected and radio configured before recording.</div>
+      <div class="metrics">
+        <div class="metric"><span>Packets received</span><strong id="rxCount">—</strong></div>
+        <div class="metric"><span>Sequence loss estimate</span><strong id="rxLost">—</strong></div>
+        <div class="metric"><span>Latest RSSI</span><strong id="rxRssi">—</strong></div>
+        <div class="metric"><span>Latest SNR</span><strong id="rxSnr">—</strong></div>
+      </div>
+    </article>
+
+    <article class="panel">
+      <h2>03 · Session identity</h2>
+      <p>The console generates one session ID and sends it to both the Pi mission writer and laptop CSV writer. New session means new paired files; a phone disconnect does not stop either recorder.</p>
+      <div class="field"><label for="controlToken">Pi field-console control token</label><input id="controlToken" type="password" placeholder="Paste token printed by installer" autocomplete="off"></div>
+      <div class="field" style="margin-top:10px"><label for="experimentId">Experiment label</label><input id="experimentId" type="text" maxlength="80" placeholder="MANIT-20261030-A"></div>
+      <div class="runmeta"><span>Generated session ID</span><span id="sessionId">Created when Start is pressed</span></div>
+      <div class="actions">
+        <button id="startBtn" disabled>▶ Start paired recording</button>
+        <button id="stopBtn" class="danger" disabled>■ Stop and save</button>
+      </div>
+      <div id="sessionMessage" class="msg">Start stays disabled until Pi preflight and receiver checks both pass.</div>
+    </article>
+  </section>
+
+  <section class="panel wide">
+    <h2>Live session status</h2>
+    <p>Pi state is authoritative for the mission. Laptop counters describe what the receiver saw; they do not imply that every modem TX DONE was received.</p>
+    <div class="runmeta"><span id="stateChip">State: idle</span><span id="stageChip">Stage: not started</span><span id="activeExperiment">Experiment: —</span><span id="activeSession">Session: —</span></div>
+    <div class="grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <div><div class="eyebrow" style="margin-bottom:8px">Pi transmitter log</div><div class="log" id="piLog">Waiting for a field session.</div></div>
+      <div><div class="eyebrow" style="margin-bottom:8px">Files created for this session</div><div class="log" id="fileList">No mission files yet.</div><div id="stopResult" class="msg"></div></div>
+    </div>
+    <div class="note"><strong>Network note:</strong> open this page at <code>http://&lt;PI-IP&gt;:8766/field-console</code> on your phone while it is connected to a network that can reach both the Pi and laptop. If your campus Wi-Fi blocks device-to-device access, put all three devices on a private router/hotspot. Don't expose the console port to the public internet.</div>
+  </section>
+  <footer><span>RobotCore Field Console · local-first</span><span>Pi mission files and laptop CSVs stay on their devices until you download them.</span></footer>
+</main>
+<script>
+(function(){
+"use strict";
+const $=id=>document.getElementById(id);
+const S={piReady:false,rxReady:false,active:false,sessionId:null,experimentId:null,preflight:null,rxStatus:null,poll:null};
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function setMessage(id,text,kind){const el=$(id);el.textContent=text;el.className="msg"+(kind?" "+kind:"");}
+function setPill(id,text,kind){const el=$(id);el.textContent=text;el.className="pill"+(kind?" "+kind:"");}
+function localStamp(){return new Date().toISOString().slice(0,19).replace(/[-:T]/g,"");}
+function sessionId(){return "RC-"+localStamp()+"-"+Math.random().toString(36).slice(2,7).toUpperCase();}
+function baseUrl(){return $("receiverUrl").value.trim().replace(/\/+$/,"");}
+function receiverToken(){return $("receiverToken").value.trim();}
+function controlToken(){return $("controlToken").value.trim();}
+function expId(){let x=$("experimentId").value.trim();if(!x){x="MANIT-"+new Date().toISOString().slice(0,10).replace(/-/g,"")+"-A";$("experimentId").value=x;}return x;}
+function validId(x){return /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/.test(x);}
+async function api(path,opts){const response=await fetch(path,opts||{});let body;try{body=await response.json();}catch(_){body={detail:await response.text()};}if(!response.ok){const d=body&&body.detail;throw Error(typeof d==="string"?d:JSON.stringify(d||("HTTP "+response.status)));}return body;}
+async function receiverApi(path,opts){const url=baseUrl();if(!url)throw Error("Enter the laptop receiver URL first.");let parsed;try{parsed=new URL(url);}catch(_){throw Error("Laptop receiver URL is not valid.");}if(parsed.protocol!=="http:"&&parsed.protocol!=="https:")throw Error("Use an http:// or https:// receiver URL.");if(parsed.username||parsed.password||parsed.search||parsed.hash)throw Error("Enter the receiver origin only.");const headers=Object.assign({},opts&&opts.headers||{},{"Authorization":"Bearer "+receiverToken()});if(opts&&opts.body)headers["Content-Type"]="application/json";return api(url+path,Object.assign({},opts||{},{headers}));}
+function renderChecks(pre){
+  S.preflight=pre;const labels=[["gps","GPS USB"],["lora","LoRa-E5 TX"],["imu","WT901BLE68"]];
+  $("piChecks").innerHTML=labels.map(([key,title])=>{const c=pre.checks[key]||{};const kind=c.ok?"ready":"bad";return '<div class="device"><div class="devicehead"><b>'+title+'</b><span class="status '+kind+'">'+(c.ok?"Ready":"Missing")+'</span></div><div class="detail">'+esc(c.device||c.detail||"Not detected")+'</div><div class="detail">'+esc(c.detail||"")+'</div></div>';}).join("");
+  S.piReady=!!pre.ok;
+  setMessage("preflightMessage",pre.ok?"Pi preflight passed. The transmitter will still wait for a fresh IMU sample and valid GPS fix.":"Pi preflight blocked: connect the missing hardware and run the check again.",pre.ok?"good":"error");
+  updateCanStart();
+}
+function updateCanStart(){
+  const inputsOk=!!(controlToken()&&receiverToken()&&baseUrl()&&validId(expId()));
+  $("startBtn").disabled=!(S.piReady&&S.rxReady&&!S.active&&inputsOk);
+  $("stopBtn").disabled=!S.active;
+}
+async function checkPi(){ $("checkBtn").disabled=true;setMessage("preflightMessage","Scanning Pi USB devices and BLE IMU…");
+ try{const p=await api("/api/preflight");renderChecks(p);}catch(e){S.piReady=false;setMessage("preflightMessage","Pi preflight request failed: "+e.message,"error");updateCanStart();}
+ finally{$("checkBtn").disabled=false;}}
+async function checkReceiver(silent){
+  if(!baseUrl()||!receiverToken()){S.rxReady=false;setPill("receiverPill","Missing URL/token","warn");if(!silent)setMessage("receiverMessage","Enter the laptop bridge URL and token from its console.","warn");updateCanStart();return null;}
+  try{
+    const r=await receiverApi("/api/status",{method:"GET"});S.rxStatus=r;
+    const good=!!(r.serial_connected&&r.radio_configured);
+    S.rxReady=good;
+    setPill("receiverPill",good?"Receiver ready":"Receiver needs attention",good?"ready":"warn");
+    const age=r.last_packet_age_s==null?"no valid packet yet":Math.round(r.last_packet_age_s)+" s since packet";
+    const err=r.last_error?" · "+r.last_error:"";
+    setMessage("receiverMessage",(r.serial_connected?"Serial connected":"Serial disconnected")+" · "+(r.radio_configured?"radio configured":"radio not verified")+" · "+age+err,good?"good":(r.serial_connected?"warn":"error"));
+    $("rxCount").textContent=Number(r.packets_received||0).toLocaleString();
+    $("rxLost").textContent=Number(r.packets_lost||0).toLocaleString();
+    $("rxRssi").textContent=r.last_rssi_dbm==null?"—":r.last_rssi_dbm+" dBm";
+    $("rxSnr").textContent=r.last_snr_db==null?"—":r.last_snr_db+" dB";
+    updateCanStart();return r;
+  }catch(e){
+    S.rxReady=false;setPill("receiverPill","Not reachable","bad");if(!silent)setMessage("receiverMessage","Laptop bridge not reachable: "+e.message+" · check same LAN, bridge --host 0.0.0.0, firewall and token.","error");
+    updateCanStart();return null;
+  }
+}
+async function preflightAll(){
+  await checkPi();
+  const rx=await checkReceiver(false);
+  if(S.piReady&&rx&&S.rxReady){setPill("overallPill","Ready to record","ready");setMessage("sessionMessage","Both sides are ready. Start will create the same session ID in Pi and laptop files.","good");}
+  else{setPill("overallPill","Needs attention","warn");setMessage("sessionMessage","Fix every missing device/connection above, then run preflight again.","warn");}
+  updateCanStart();
+}
+async function startSession(){
+  $("startBtn").disabled=true;$("checkBtn").disabled=true;setMessage("sessionMessage","Rechecking both ends, then creating a paired session…");
+  let rxStarted=false;
+  const sid=sessionId(),exp=expId();
+  if(!validId(exp)){setMessage("sessionMessage","Experiment label contains unsupported characters.","error");$("checkBtn").disabled=false;updateCanStart();return;}
+  try{
+    const pre=await api("/api/preflight");renderChecks(pre);
+    if(!pre.ok)throw Error("Pi preflight failed; see device details above.");
+    const rx=await checkReceiver(false);if(!rx||!rx.serial_connected||!rx.radio_configured)throw Error("Laptop receiver is not ready; no session was started.");
+    await receiverApi("/api/session/start",{method:"POST",body:JSON.stringify({experiment_id:exp,session_id:sid})});rxStarted=true;
+    const pi=await api("/api/session/start",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+controlToken()},body:JSON.stringify({experiment_id:exp,session_id:sid})});
+    S.active=true;S.sessionId=sid;S.experimentId=exp;$("sessionId").textContent=sid;
+    setPill("overallPill","Session starting","ready");setMessage("sessionMessage","Paired session started. Wait for fresh IMU and valid GPS fix before walking.","good");
+    $("stateChip").textContent="State: "+pi.state;$("stageChip").textContent="Stage: "+pi.stage;$("activeExperiment").textContent="Experiment: "+exp;$("activeSession").textContent="Session: "+sid;
+    $("stopResult").textContent="";updateCanStart();await refreshStatus();
+  }catch(e){
+    if(rxStarted){try{await receiverApi("/api/session/stop",{method:"POST",body:JSON.stringify({session_id:sid})});}catch(_){}}
+    S.active=false;S.sessionId=null;setPill("overallPill","Start failed","bad");setMessage("sessionMessage","Could not start paired session: "+e.message,"error");
+  }finally{$("checkBtn").disabled=false;updateCanStart();}
+}
+async function stopSession(){
+  $("stopBtn").disabled=true;setMessage("sessionMessage","Stopping Pi transmitter and closing both files…");let pi=null,rx=null,errors=[];
+  try{pi=await api("/api/session/stop",{method:"POST",headers:{"Authorization":"Bearer "+controlToken()}});}catch(e){errors.push("Pi stop: "+e.message);}
+  try{rx=await receiverApi("/api/session/stop",{method:"POST",body:JSON.stringify({session_id:S.sessionId||""})});}catch(e){errors.push("Receiver stop: "+e.message);}
+  S.active=false;setPill("overallPill",errors.length?"Stop needs review":"Session saved",errors.length?"warn":"ready");
+  if(pi&&pi.mission_files){$("fileList").textContent=pi.mission_files.map(f=>f.name+" · "+Number(f.size_bytes).toLocaleString()+" bytes").join("\n")||"No mission files were created."; }
+  if(errors.length){setMessage("sessionMessage","Stop request returned issues: "+errors.join(" · ")+". Keep the files and check local status.","error");}
+  else{setMessage("sessionMessage","Session stopped. Keep the Pi .rcm, .events.jsonl, .manifest.json and the matching receiver CSV together.","good");}
+  S.active=false;await refreshStatus();updateCanStart();
+}
+function renderStatus(s){
+  $("stateChip").textContent="State: "+(s.state||"idle");$("stageChip").textContent="Stage: "+(s.stage||"not started");
+  $("activeExperiment").textContent="Experiment: "+(s.experiment_id||"—");$("activeSession").textContent="Session: "+(s.session_id||"—");
+  $("piLog").textContent=(s.log_tail||[]).join("\n")||"No transmitter log yet.";
+  if(s.mission_files&&s.mission_files.length){$("fileList").textContent=s.mission_files.map(f=>f.name+" · "+Number(f.size_bytes).toLocaleString()+" bytes").join("\n");}
+  if(s.state==="running"){S.active=true;S.sessionId=s.session_id;S.experimentId=s.experiment_id;setPill("overallPill","Session active","ready");}
+  else if(S.active&&s.state!=="running"){S.active=false;setPill("overallPill",s.state==="failed"?"Session failed":"Session stopped",s.state==="failed"?"bad":"warn");setMessage("sessionMessage","Pi transmitter is no longer running. Check its log below; mission files are preserved.","warn");}
+  if(s.session_id)$("sessionId").textContent=s.session_id;
+  updateCanStart();
+}
+async function refreshStatus(){try{const s=await api("/api/status");renderStatus(s);}catch(e){setPill("overallPill","Pi console disconnected","bad");setMessage("sessionMessage","The Pi console is temporarily unreachable. Local Pi recording may continue; reconnect to check/stop it.","error");}
+  await checkReceiver(true);
+}
+function saveFields(){localStorage.setItem("robotcore-field-rx-url",baseUrl());sessionStorage.setItem("robotcore-field-rx-token",receiverToken());sessionStorage.setItem("robotcore-field-control-token",controlToken());}
+function bind(){ $("checkBtn").addEventListener("click",preflightAll);$("checkReceiverBtn").addEventListener("click",()=>checkReceiver(false));$("startBtn").addEventListener("click",startSession);$("stopBtn").addEventListener("click",stopSession);
+  ["receiverUrl","receiverToken","controlToken","experimentId"].forEach(id=>$(id).addEventListener("input",()=>{saveFields();updateCanStart();}));
+}
+function init(){ $("receiverUrl").value=localStorage.getItem("robotcore-field-rx-url")||"";$("receiverToken").value=sessionStorage.getItem("robotcore-field-rx-token")||"";$("controlToken").value=sessionStorage.getItem("robotcore-field-control-token")||"";$("experimentId").value="MANIT-"+new Date().toISOString().slice(0,10).replace(/-/g,"")+"-A";bind();refreshStatus();S.poll=setInterval(refreshStatus,3000);}
+if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",init);else init();
+})();
+</script>
+</body>
+</html>
