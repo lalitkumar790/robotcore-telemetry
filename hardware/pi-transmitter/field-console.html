@@ -85,7 +85,7 @@ main{width:min(1120px,100%);margin:auto;padding:20px}.top{display:flex;justify-c
 (function(){
 "use strict";
 const $=id=>document.getElementById(id);
-const S={piReady:false,rxReady:false,active:false,sessionId:null,experimentId:null,preflight:null,rxStatus:null,poll:null};
+const S={piReady:false,rxReady:false,rxCaptureActive:false,active:false,sessionId:null,experimentId:null,preflight:null,rxStatus:null,poll:null};
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 function setMessage(id,text,kind){const el=$(id);el.textContent=text;el.className="msg"+(kind?" "+kind:"");}
 function setPill(id,text,kind){const el=$(id);el.textContent=text;el.className="pill"+(kind?" "+kind:"");}
@@ -96,7 +96,7 @@ function receiverToken(){return $("receiverToken").value.trim();}
 function controlToken(){return $("controlToken").value.trim();}
 function expId(){let x=$("experimentId").value.trim();if(!x){x="MANIT-"+new Date().toISOString().slice(0,10).replace(/-/g,"")+"-A";$("experimentId").value=x;}return x;}
 function validId(x){return /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/.test(x);}
-async function api(path,opts){const response=await fetch(path,opts||{});let body;try{body=await response.json();}catch(_){body={detail:await response.text()};}if(!response.ok){const d=body&&body.detail;throw Error(typeof d==="string"?d:JSON.stringify(d||("HTTP "+response.status)));}return body;}
+async function api(path,opts){const response=await fetch(path,opts||{});const raw=await response.text();let body;try{body=raw?JSON.parse(raw):{};}catch(_){body={detail:raw};}if(!response.ok){const d=body&&body.detail;throw Error(typeof d==="string"?d:JSON.stringify(d||("HTTP "+response.status)));}return body;}
 async function receiverApi(path,opts){const url=baseUrl();if(!url)throw Error("Enter the laptop receiver URL first.");let parsed;try{parsed=new URL(url);}catch(_){throw Error("Laptop receiver URL is not valid.");}if(parsed.protocol!=="http:"&&parsed.protocol!=="https:")throw Error("Use an http:// or https:// receiver URL.");if(parsed.username||parsed.password||parsed.search||parsed.hash)throw Error("Enter the receiver origin only.");const headers=Object.assign({},opts&&opts.headers||{},{"Authorization":"Bearer "+receiverToken()});if(opts&&opts.body)headers["Content-Type"]="application/json";return api(url+path,Object.assign({},opts||{},{headers}));}
 function renderChecks(pre){
   S.preflight=pre;const labels=[["gps","GPS USB"],["lora","LoRa-E5 TX"],["imu","WT901BLE68"]];
@@ -107,8 +107,8 @@ function renderChecks(pre){
 }
 function updateCanStart(){
   const inputsOk=!!(controlToken()&&receiverToken()&&baseUrl()&&validId(expId()));
-  $("startBtn").disabled=!(S.piReady&&S.rxReady&&!S.active&&inputsOk);
-  $("stopBtn").disabled=!S.active;
+  $("startBtn").disabled=!(S.piReady&&S.rxReady&&!S.active&&!S.rxCaptureActive&&inputsOk);
+  $("stopBtn").disabled=!(S.active||S.rxCaptureActive);
 }
 async function checkPi(){ $("checkBtn").disabled=true;setMessage("preflightMessage","Scanning Pi USB devices and BLE IMU…");
  try{const p=await api("/api/preflight");renderChecks(p);}catch(e){S.piReady=false;setMessage("preflightMessage","Pi preflight request failed: "+e.message,"error");updateCanStart();}
@@ -119,10 +119,11 @@ async function checkReceiver(silent){
     const r=await receiverApi("/api/status",{method:"GET"});S.rxStatus=r;
     const good=!!(r.serial_connected&&r.radio_configured);
     S.rxReady=good;
+    S.rxCaptureActive=!!r.capture_active;
     setPill("receiverPill",good?"Receiver ready":"Receiver needs attention",good?"ready":"warn");
     const age=r.last_packet_age_s==null?"no valid packet yet":Math.round(r.last_packet_age_s)+" s since packet";
     const err=r.last_error?" · "+r.last_error:"";
-    setMessage("receiverMessage",(r.serial_connected?"Serial connected":"Serial disconnected")+" · "+(r.radio_configured?"radio configured":"radio not verified")+" · "+age+err,good?"good":(r.serial_connected?"warn":"error"));
+    setMessage("receiverMessage",(r.serial_connected?"Serial connected":"Serial disconnected")+" · "+(r.radio_configured?"radio configured":"radio not verified")+" · "+(r.capture_active?"CSV capture active": "capture stopped")+" · "+age+err,good?"good":(r.serial_connected?"warn":"error"));
     $("rxCount").textContent=Number(r.packets_received||0).toLocaleString();
     $("rxLost").textContent=Number(r.packets_lost||0).toLocaleString();
     $("rxRssi").textContent=r.last_rssi_dbm==null?"—":r.last_rssi_dbm+" dBm";
@@ -146,6 +147,8 @@ async function startSession(){
   const sid=sessionId(),exp=expId();
   if(!validId(exp)){setMessage("sessionMessage","Experiment label contains unsupported characters.","error");$("checkBtn").disabled=false;updateCanStart();return;}
   try{
+    const currentReceiver=await checkReceiver(false);
+    if(currentReceiver&&currentReceiver.capture_active)throw Error("A receiver capture is already active. Press Stop and save before starting another session.");
     const pre=await api("/api/preflight");renderChecks(pre);
     if(!pre.ok)throw Error("Pi preflight failed; see device details above.");
     const rx=await checkReceiver(false);if(!rx||!rx.serial_connected||!rx.radio_configured)throw Error("Laptop receiver is not ready; no session was started.");
@@ -176,7 +179,7 @@ function renderStatus(s){
   $("piLog").textContent=(s.log_tail||[]).join("\n")||"No transmitter log yet.";
   if(s.mission_files&&s.mission_files.length){$("fileList").textContent=s.mission_files.map(f=>f.name+" · "+Number(f.size_bytes).toLocaleString()+" bytes").join("\n");}
   if(s.state==="running"){S.active=true;S.sessionId=s.session_id;S.experimentId=s.experiment_id;setPill("overallPill","Session active","ready");}
-  else if(S.active&&s.state!=="running"){S.active=false;setPill("overallPill",s.state==="failed"?"Session failed":"Session stopped",s.state==="failed"?"bad":"warn");setMessage("sessionMessage","Pi transmitter is no longer running. Check its log below; mission files are preserved.","warn");}
+  else if(S.active&&s.state!=="running"){S.active=false;setPill("overallPill",s.state==="failed"?"Pi session failed":"Pi stopped",s.state==="failed"?"bad":"warn");setMessage("sessionMessage",S.rxCaptureActive?"Pi transmitter stopped but laptop CSV is still open. Press Stop and save to close both sides.":"Pi transmitter is no longer running. Check its log below; mission files are preserved.","warn");}
   if(s.session_id)$("sessionId").textContent=s.session_id;
   updateCanStart();
 }
