@@ -114,7 +114,7 @@ class FieldController:
             if self.session_id and MISSIONS_PATH.exists():
                 needle = _safe_name(self.session_id)
                 for f in sorted(MISSIONS_PATH.glob("*" + needle + "*")):
-                    if f.is_file():
+                    if f.is_file() and f.suffix in {".rcm", ".jsonl", ".json"}:
                         files.append({"name": f.name, "size_bytes": f.stat().st_size})
             return {
                 "state": "running" if running else self.state,
@@ -139,13 +139,15 @@ class FieldController:
                 raise HTTPException(status_code=422, detail="Experiment and session IDs may contain letters, numbers, dots, underscores and dashes only.")
             MISSIONS_PATH.mkdir(parents=True, exist_ok=True)
             log_path = MISSIONS_PATH / ("session_" + _safe_name(session_id) + ".log")
+            if log_path.exists():
+                raise HTTPException(status_code=409, detail="This session ID already has a Pi run log. Generate a new session.")
             env = os.environ.copy()
             env["ROBOTCORE_EXPERIMENT_ID"] = experiment_id
             env["ROBOTCORE_SESSION_ID"] = session_id
             env["ROBOTCORE_MISSIONS_DIR"] = str(MISSIONS_PATH)
             if IMU_ADDRESS:
                 env["ROBOTCORE_IMU_ADDRESS"] = IMU_ADDRESS
-            handle = log_path.open("a", encoding="utf-8", buffering=1)
+            handle = log_path.open("x", encoding="utf-8", buffering=1)
             command = [
                 sys.executable, str(PI_DIR / "runner.py"),
                 "--require-lora", "--imu-startup-timeout", "120",
@@ -274,7 +276,9 @@ async def preflight() -> dict[str, Any]:
 
 
 @app.get("/api/status")
-def status() -> dict[str, Any]:
+def status(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    if not _authorized(authorization):
+        raise HTTPException(status_code=401, detail="Field-console token is missing or invalid.")
     return controller.status()
 
 
