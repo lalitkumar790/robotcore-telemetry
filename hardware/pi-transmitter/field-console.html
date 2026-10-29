@@ -164,14 +164,27 @@ async function startSession(){
   }finally{$("checkBtn").disabled=false;updateCanStart();}
 }
 async function stopSession(){
-  $("stopBtn").disabled=true;setMessage("sessionMessage","Stopping Pi transmitter and closing both files…");let pi=null,rx=null,errors=[];
-  try{pi=await api("/api/session/stop",{method:"POST",headers:{"Authorization":"Bearer "+controlToken()}});}catch(e){errors.push("Pi stop: "+e.message);}
-  try{rx=await receiverApi("/api/session/stop",{method:"POST",body:JSON.stringify({session_id:S.sessionId||""})});}catch(e){errors.push("Receiver stop: "+e.message);}
-  S.active=false;setPill("overallPill",errors.length?"Stop needs review":"Session saved",errors.length?"warn":"ready");
+  $("stopBtn").disabled=true;setMessage("sessionMessage","Stopping Pi transmitter first; keeping the receiver CSV open until Pi stop is confirmed…");
+  let pi=null,rx=null;
+  try{
+    pi=await api("/api/session/stop",{method:"POST",headers:{"Authorization":"Bearer "+controlToken()}});
+  }catch(e){
+    S.active=true;setPill("overallPill","Pi stop not confirmed","bad");
+    setMessage("sessionMessage","Pi stop request failed: "+e.message+". The receiver CSV is intentionally still open. Reconnect to the Pi console and retry Stop before closing the receiver.","error");
+    updateCanStart();return;
+  }
+  try{
+    rx=await receiverApi("/api/session/stop",{method:"POST",body:JSON.stringify({session_id:S.sessionId||""})});
+  }catch(e){
+    S.active=false;setPill("overallPill","Pi stopped · receiver needs review","warn");
+    setMessage("sessionMessage","Pi stopped, but receiver close failed: "+e.message+". Keep the CSV and retry receiver Stop after restoring the laptop connection.","error");
+    await refreshStatus();updateCanStart();return;
+  }
+  S.active=false;S.rxCaptureActive=false;
+  setPill("overallPill",pi&&pi.state==="failed"?"Session stopped with Pi error":"Session saved",pi&&pi.state==="failed"?"warn":"ready");
   if(pi&&pi.mission_files){$("fileList").textContent=pi.mission_files.map(f=>f.name+" · "+Number(f.size_bytes).toLocaleString()+" bytes").join("\n")||"No mission files were created."; }
-  if(errors.length){setMessage("sessionMessage","Stop request returned issues: "+errors.join(" · ")+". Keep the files and check local status.","error");}
-  else{setMessage("sessionMessage","Session stopped. Keep the Pi .rcm, .events.jsonl, .manifest.json and the matching receiver CSV together.","good");}
-  S.active=false;await refreshStatus();updateCanStart();
+  setMessage("sessionMessage",pi&&pi.state==="failed"?"Pi process exited with an error. Inspect the log; the receiver CSV was closed. Preserve all files for diagnosis.":"Session stopped. Keep the Pi .rcm, .events.jsonl, .manifest.json and the matching receiver CSV together.","good");
+  await refreshStatus();updateCanStart();
 }
 function renderStatus(s){
   $("stateChip").textContent="State: "+(s.state||"idle");$("stageChip").textContent="Stage: "+(s.stage||"not started");
@@ -183,7 +196,7 @@ function renderStatus(s){
   if(s.session_id)$("sessionId").textContent=s.session_id;
   updateCanStart();
 }
-async function refreshStatus(){try{const s=await api("/api/status");renderStatus(s);}catch(e){setPill("overallPill","Pi console disconnected","bad");setMessage("sessionMessage","The Pi console is temporarily unreachable. Local Pi recording may continue; reconnect to check/stop it.","error");}
+async function refreshStatus(){try{const s=await api("/api/status",{headers:{"Authorization":"Bearer "+controlToken()}});renderStatus(s);}catch(e){setPill("overallPill","Pi status locked/unavailable","warn");setMessage("sessionMessage",controlToken()?"Pi status is unreachable or the field-console token is invalid. Check the Pi URL/network and token before starting.":"Enter the Pi field-console token to read status and control recording.","warn");}
   await checkReceiver(true);
 }
 function saveFields(){localStorage.setItem("robotcore-field-rx-url",baseUrl());sessionStorage.setItem("robotcore-field-rx-token",receiverToken());sessionStorage.setItem("robotcore-field-control-token",controlToken());}
