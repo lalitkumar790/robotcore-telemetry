@@ -16,7 +16,7 @@ function openLocalFieldConsole(){
  if(!raw){toast("Enter the Pi local URL, e.g. http://10.222.153.188:8766/field-console",true);return;}
  let u;try{u=new URL(raw);}catch(_){toast("Pi console URL is not valid.",true);return;}
  const host=(u.hostname||"").toLowerCase();
- const isPrivate=/^(10|127)\\./.test(host)||/^192\\.168\\./.test(host)||/^172\\.(1[6-9]|2[0-9]|3[01])\\./.test(host)||host==="localhost"||host.endsWith(".local");
+ const isPrivate=/^(10|127)\./.test(host)||/^192\.168\./.test(host)||/^172\.(1[6-9]|2[0-9]|3[01])\./.test(host)||host==="localhost"||host.endsWith(".local");
  if(u.protocol!=="http:"||u.username||u.password||u.search||u.hash||!isPrivate){toast("Use an HTTP URL on your private LAN, such as http://10.222.153.188:8766/field-console.",true);return;}
  if(!u.port)u.port="8766";
  if(u.pathname==="/"||u.pathname==="")u.pathname="/field-console";
