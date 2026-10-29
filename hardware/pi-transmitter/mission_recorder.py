@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import struct
 import time
 from datetime import datetime, timezone
@@ -25,7 +26,10 @@ class MissionRecorder:
         self.directory = Path(directory).expanduser().resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
         self.start_unix = time.time()
-        stem = datetime.now().strftime("mission_%Y%m%d_%H%M%S")
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.session_id = os.getenv("ROBOTCORE_SESSION_ID", "").strip() or None
+        session_component = re.sub(r"[^A-Za-z0-9_-]+", "-", self.session_id or "").strip("-_")[:80]
+        stem = f"mission_{stamp}_{session_component}" if session_component else f"mission_{stamp}"
         candidate = self.directory / f"{stem}.rcm"
         suffix = 1
         while candidate.exists():
@@ -69,8 +73,8 @@ class MissionRecorder:
         self._event_id += 1
         row = {
             "schema_version": "1.0.0", "event_id": self._event_id,
-            "experiment_id": self.experiment_id, "mission_file": self.path.name,
-            "event": event_type, "timestamp_utc": utc_now(),
+            "experiment_id": self.experiment_id, "session_id": self.session_id,
+            "mission_file": self.path.name, "event": event_type, "timestamp_utc": utc_now(),
             "timestamp_unix": time.time(), "monotonic_s": time.monotonic(),
         }
         row.update(fields)
@@ -105,6 +109,7 @@ class MissionRecorder:
         self._events.close()
         manifest = {
             "schema_version": "1.0.0", "experiment_id": self.experiment_id,
+            "session_id": self.session_id,
             "mission_file": self.path.name, "events_file": self.events_path.name,
             "started_at_unix": self.start_unix, "ended_at_unix": ended,
             "duration_s": max(0.0, ended - self.start_unix), "sample_count": self.samples_written,

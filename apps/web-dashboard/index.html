@@ -15,6 +15,7 @@ a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}butto
 .leaflet-container{font:12px/1.5 Inter,system-ui,sans-serif}.leaflet-control-attribution{background:#0b121ddd!important;color:#b1c3d4!important}.leaflet-control-attribution a{color:#8fc6ff!important}.leaflet-bar a{background:#132232!important;color:#deeffc!important;border-color:#2d455b!important}.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#101d2a;color:#ecf3fc}.leaflet-popup-content{margin:9px 12px}.leaflet-popup-content small{color:#91a3b9}
 @media(max-width:1050px){.main-grid,.duo,.comparison-grid{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.summarycards{grid-template-columns:repeat(2,minmax(0,1fr))}.intro{align-items:flex-start;flex-direction:column}.statusline{min-width:auto}.workflow{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px){.shell{padding:14px}.top{align-items:flex-start;flex-direction:column}.topright{justify-content:flex-start}.metric{padding:12px}.metric .value{font-size:21px}.panel{padding:13px}.mapframe{height:300px}.chart{height:190px}.workflow{grid-template-columns:repeat(2,minmax(0,1fr))}.devicegrid{grid-template-columns:1fr}.drawer{padding:14px}.imu-panel{gap:6px}.imu-stat{padding:9px}.imu-stat strong{font-size:16px}.latest-grid{gap:6px}.reading{padding:8px}.reading strong{font-size:15px}}
+.field-console-banner{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.8fr);gap:18px;align-items:center;margin:0 0 14px;padding:16px 18px;border:1px solid #35536a;border-radius:13px;background:linear-gradient(120deg,#112a3c,#101a28)}.field-console-banner h3{font-size:15px;margin:5px 0}.field-console-banner p{margin:0;color:var(--muted);font-size:12px;max-width:800px}.field-console-open{display:grid;gap:7px}.field-console-open label{font-size:11px;color:var(--muted)}.field-console-open input{width:100%;min-width:0;color:var(--text);border:1px solid #34485d;border-radius:8px;background:#08121d;padding:9px 10px;font-size:12px}.field-console-open .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.field-console-open .small-note{font-size:10px;color:var(--muted)}@media(max-width:760px){.field-console-banner{grid-template-columns:1fr;padding:14px}.field-console-open .actions .btn{width:100%}}
 </style>
 </head>
 <body>
@@ -25,13 +26,26 @@ a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}butto
     <a class="pill" href="https://github.com/lalitkumar790/robotcore-telemetry">GitHub ↗</a>
     <a class="pill" href="/import.html">CSV inspector ↗</a>
     <button class="btn secondary" id="statusBtn"><span class="live-dot" id="statusDot"></span>Device status <span id="statusCount">0</span></button>
-    <button class="btn" id="recordBtn"><span class="live-dot" id="recordDot"></span><span id="recordLabel">Start laptop recording</span></button>
+    <button class="btn" id="recordBtn"><span class="live-dot" id="recordDot"></span><span id="recordLabel">Start browser backup capture</span></button>
     <button class="btn secondary" id="exportLaptopBtn">Save laptop CSV</button>
   </div>
 </header>
 <section class="intro">
   <div><div class="eyebrow">Communication-aware robotics · MANIT Bhopal</div><h2>Measure the link. Understand the space. Plan with evidence.</h2><p>Live LoRa/GPS/IMU monitoring, loss-aware path mapping, browser-local capture, and a 3D coordinate cloud. Real measurements are distinguished from missing or inferred data.</p></div>
   <div class="statusline"><strong id="systemHeadline">Awaiting devices</strong><span id="systemSub">Map centered on MANIT · 23.213622, 77.408091</span></div>
+</section>
+<section class="field-console-banner" aria-label="Local field session console">
+  <div>
+    <div class="eyebrow">Recommended for field collection</div>
+    <h3>One session ID · start both recorders together · no Cloudflare tunnel</h3>
+    <p>For a new campus walk, open the local Field Console served by the Pi. It checks GPS, LoRa-E5 and the WitMotion sensor, pairs the Pi mission with the laptop CSV, shows startup/retry logs, and provides one Stop & Save button. The hosted dashboard below remains useful for live analysis and post-walk comparison.</p>
+  </div>
+  <div class="field-console-open">
+    <label for="piConsoleUrl">Raspberry Pi Field Console URL</label>
+    <input id="piConsoleUrl" type="url" inputmode="url" placeholder="http://10.222.153.188:8766/field-console" value="">
+    <div class="actions"><button class="btn" id="openPiConsoleBtn">Open local Field Console ↗</button><span class="status" id="piConsoleHint">Local network required</span></div>
+    <div class="small-note">Phone, Pi and laptop must be able to reach each other on the same private LAN/hotspot. Don’t expose port 8766 to the public internet.</div>
+  </div>
 </section>
 <section class="grid metrics" aria-label="Live telemetry summary">
   <article class="metric"><div class="label">Packets received</div><div class="value" id="metricReceived">0</div><div class="sub" id="metricReceivedSub">No live receiver connected</div></article>
