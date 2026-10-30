@@ -323,7 +323,7 @@ function parseRxCsv(text){
 }
 async function parsePiSidecar(file){
  if(!file)return null;
- const text=await file.text(),lines=text.split(/\r?\n/),samples=[],lastBySequence=new Map();
+ const text=await file.text(),lines=text.split(/\r?\n/),samples=[],skippedSamples=[],lastBySequence=new Map();
  let experimentId="",sessionId="",radioConfig=null,badLines=0;
  for(let i=0;i<lines.length;i++){
   const line=lines[i].trim();if(!line)continue;
@@ -343,6 +343,17 @@ async function parsePiSidecar(file){
     eventId:event.event_id
    };
    samples.push(item);lastBySequence.set(seq,item);
+  }else if(event.event==="sample_skipped"){
+   skippedSamples.push({
+    reason:String(event.reason||"unknown"),
+    timestampUnix:Number.isFinite(timestampUnix)?timestampUnix:null,
+    timestampUtc:event.timestamp_utc?String(event.timestamp_utc):null,
+    gpsValid:event.gps_valid===true,
+    imuConnected:!!event.imu_connected,
+    imuAgeS:Number.isFinite(Number(event.imu_age_s))?Number(event.imu_age_s):null,
+    gpsError:event.gps_error?String(event.gps_error):null,
+    txOutcome:String(event.tx_outcome||"not_attempted")
+   });
   }else if(event.event==="tx_result"&&Number.isFinite(seq)){
    const item=lastBySequence.get(seq);
    if(item){
@@ -354,7 +365,7 @@ async function parsePiSidecar(file){
   }
  }
  if(!samples.length)throw Error("Pi event sidecar contains no sample_recorded events.");
- return{fileName:file.name,experimentId,sessionId,radioConfig,samples,badLines};
+ return{fileName:file.name,experimentId,sessionId,radioConfig,samples,skippedSamples,badLines};
 }
 function decodeMissionPacket(b){if(b.length!==35||b[0]!==0xaa||b[1]!==2||b[2]!==6)throw Error("Expected RTPv2 RobotState packet");if(crc16(b,33)!==((b[33]<<8)|b[34]))throw Error("mission CRC mismatch");const d=new DataView(b.buffer,b.byteOffset,b.byteLength);return{sequence:d.getUint16(3,false),latitude:d.getInt32(5,false)/1e6,longitude:d.getInt32(9,false)/1e6,speed:d.getUint16(13,false)/100,ax:d.getInt16(15,false)/1000,ay:d.getInt16(17,false)/1000,az:d.getInt16(19,false)/1000,gx:d.getInt16(21,false)/10,gy:d.getInt16(23,false)/10,gz:d.getInt16(25,false)/10,roll:d.getInt16(27,false)/100,pitch:d.getInt16(29,false)/100,yaw:d.getInt16(31,false)/100,received:false,source:"pi-mission"};}
 async function parseRcm(file){const b=new Uint8Array(await file.arrayBuffer());if(b.length<13||b[0]!==0x52||b[1]!==0x43||b[2]!==0x4d||b[3]!==0x31)throw Error("Bad RCM header. Select a Pi transmitter .rcm file.");const d=new DataView(b.buffer,b.byteOffset,b.byteLength),version=b[4],start=d.getFloat64(5,false);if(version!==1)throw Error("Unsupported RCM format version "+version);const count=Math.floor((b.length-13)/35),remainder=(b.length-13)%35,records=[];for(let i=0;i<count;i++){const packet=b.slice(13+i*35,13+(i+1)*35);try{const r=decodeMissionPacket(packet);r.index=i;r.missionStartTime=start;records.push(r);}catch(e){records.push({index:i,sequence:(packet[3]<<8)|packet[4],latitude:null,longitude:null,received:false,invalid:true,error:e.message,source:"pi-mission"});}}if(!records.length)throw Error("No complete mission samples were found.");return{fileName:file.name,formatVersion:version,startTime:start,records,remainder,rawBytes:b.length};}
@@ -401,7 +412,7 @@ function alignMission(m,rx,sidecar){
  m.duplicates=duplicateRx;m.unmatched=unmatched;m.wraps=wraps;m.receiverCount=rx.records.length;
  m.sidecarLoaded=!!sidecar;m.sidecarFile=sidecar?sidecar.fileName:null;m.sidecarMatched=sidecarMatched;
  m.experimentId=sidecar?sidecar.experimentId:"";m.receiverExperimentId=rx.experimentId||"";m.rxSessionId=rx.rxSessionId||"";
- m.sessionId=sidecar?sidecar.sessionId:"";m.receiverFieldSessionId=rx.fieldSessionId||"";m.radioConfig=sidecar?sidecar.radioConfig:null;m.receiverFileName=rx.fileName||"";
+ m.sessionId=sidecar?sidecar.sessionId:"";m.receiverFieldSessionId=rx.fieldSessionId||"";m.radioConfig=sidecar?sidecar.radioConfig:null;m.sidecarSkippedSamples=sidecar?sidecar.skippedSamples:[];m.receiverFileName=rx.fileName||"";
  m.sessionVerified=!!(m.sessionId&&m.receiverFieldSessionId&&m.sessionId===m.receiverFieldSessionId);
  m.sessionMismatch=!!(m.sessionId&&m.receiverFieldSessionId&&m.sessionId!==m.receiverFieldSessionId);
  m.sidecarMismatch=!!(m.experimentId&&m.receiverExperimentId&&m.experimentId!=="UNLABELLED"&&m.receiverExperimentId!=="UNLABELLED"&&m.experimentId!==m.receiverExperimentId);
@@ -689,7 +700,11 @@ function exportMergedSession(){
    radio_config:route.radioConfig||null
   },
   summary,
-  records
+  records,
+  auxiliary_events:{
+   pi_samples_skipped_for_gps_fix:route.sidecarSkippedSamples||[],
+   note:"Skipped GPS-fix events are sidecar events, not transmitted RTP samples. They are not added to the TX/RX PDR denominator."
+  }
  };
  const name=(route.sessionId||route.experimentId||"unlabelled").replace(/[^A-Za-z0-9_-]+/g,"-");
  download(new Blob([JSON.stringify(merged,null,2)],{type:"application/json;charset=utf-8"}),"robotcore_merged_"+name+".json");
