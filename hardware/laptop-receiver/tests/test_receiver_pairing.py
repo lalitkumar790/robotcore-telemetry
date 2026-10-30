@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent / "common"))
 
-from pairing_protocol import encode_pairing_beacon
+from pairing_protocol import encode_pairing_beacon, encode_status_beacon
 from receiver import ReceiverWorker
 
 
@@ -50,6 +50,40 @@ class ReceiverPairingBeaconTests(unittest.TestCase):
         self.assertEqual(worker.packets_received, 0)
         self.assertEqual(worker.packets_corrupt, 0)
         self.assertEqual(worker.pairing_received, 1)
+
+    def test_status_beacon_updates_pi_health_without_creating_telemetry_samples(self):
+        key = os.urandom(32)
+        statuses = []
+        worker = ReceiverWorker(
+            port="COM8",
+            log_dir="logs",
+            radio={},
+            on_packet=lambda _record: self.fail("Pi health beacons must not be emitted as telemetry."),
+            on_status=lambda: None,
+            experiment_id="UNLABELLED",
+            managed_sessions=True,
+            on_pi_status=statuses.append,
+            pairing_key=key,
+        )
+        now = int(time.time())
+        packet = encode_status_beacon({
+            "device_id": "pi-field-01",
+            "state": "waiting_for_internet",
+            "internet_connected": False,
+            "tunnel_state": "waiting_for_internet",
+            "last_error": "Internet probe timed out",
+            "issued_at": now,
+            "valid_until": now + 30,
+        }, key)
+
+        worker._process_packet(packet)
+
+        self.assertEqual(len(statuses), 1)
+        self.assertEqual(statuses[0]["state"], "waiting_for_internet")
+        self.assertFalse(statuses[0]["internet_connected"])
+        self.assertEqual(worker.packets_received, 0)
+        self.assertEqual(worker.packets_corrupt, 0)
+        self.assertEqual(worker.pi_status_received, 1)
 
     def test_beacon_with_wrong_pairing_key_is_rejected_not_counted_as_corrupt_telemetry(self):
         received = []
