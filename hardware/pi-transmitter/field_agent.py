@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
@@ -23,6 +24,9 @@ from device_discovery import select_serial_port, serial_candidates
 from config import GPS_VID_PID, LORA_VID_PID
 
 PI_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(PI_DIR.parent / "common"))
+from pairing_announcer import TunnelPairingAnnouncer
+
 MISSIONS_PATH = Path(MISSIONS_DIR).expanduser()
 if not MISSIONS_PATH.is_absolute():
     MISSIONS_PATH = (PI_DIR / MISSIONS_PATH).resolve()
@@ -43,13 +47,13 @@ def _safe_name(value: str) -> str:
 
 
 def _authorized(header: str | None) -> bool:
-    if not CONSOLE_TOKEN:
-        return False
     value = (header or "").strip()
     if value.lower().startswith("bearer "):
         value = value[7:].strip()
+    if not value:
+        return False
     import hmac
-    return bool(value) and hmac.compare_digest(value, CONSOLE_TOKEN)
+    return (bool(CONSOLE_TOKEN) and hmac.compare_digest(value, CONSOLE_TOKEN)) or ANNOUNCER.authorize("Bearer " + value)
 
 
 class StartRequest(BaseModel):
@@ -58,7 +62,8 @@ class StartRequest(BaseModel):
 
 
 class FieldController:
-    def __init__(self) -> None:
+    def __init__(self, announcer: TunnelPairingAnnouncer) -> None:
+        self.announcer = announcer
         self.lock = threading.RLock()
         self.process: subprocess.Popen | None = None
         self.log_handle = None
@@ -80,6 +85,8 @@ class FieldController:
             if self.log_handle:
                 self.log_handle.close()
                 self.log_handle = None
+            if self.state in {"failed", "stopped"}:
+                self.announcer.resume_after_recording()
 
     def _tail(self, limit: int = 30) -> list[str]:
         if not self.log_path or not self.log_path.exists():
@@ -128,6 +135,7 @@ class FieldController:
                 "log_file": str(self.log_path) if self.log_path else None,
                 "log_tail": lines,
                 "mission_files": files,
+                "connection": self.announcer.status(),
             }
 
     def start(self, experiment_id: str, session_id: str) -> dict[str, Any]:
@@ -137,9 +145,12 @@ class FieldController:
                 raise HTTPException(status_code=409, detail="A field session is already running.")
             if not valid_id(experiment_id) or not valid_id(session_id):
                 raise HTTPException(status_code=422, detail="Experiment and session IDs may contain letters, numbers, dots, underscores and dashes only.")
+            if not self.announcer.pause_for_recording():
+                raise HTTPException(status_code=503, detail="Could not release the LoRa radio from pairing mode. Check the Pi connection status and retry.")
             MISSIONS_PATH.mkdir(parents=True, exist_ok=True)
             log_path = MISSIONS_PATH / ("session_" + _safe_name(session_id) + ".log")
             if log_path.exists():
+                self.announcer.resume_after_recording()
                 raise HTTPException(status_code=409, detail="This session ID already has a Pi run log. Generate a new session.")
             env = os.environ.copy()
             env["ROBOTCORE_EXPERIMENT_ID"] = experiment_id
@@ -147,7 +158,11 @@ class FieldController:
             env["ROBOTCORE_MISSIONS_DIR"] = str(MISSIONS_PATH)
             if IMU_ADDRESS:
                 env["ROBOTCORE_IMU_ADDRESS"] = IMU_ADDRESS
-            handle = log_path.open("x", encoding="utf-8", buffering=1)
+            try:
+                handle = log_path.open("x", encoding="utf-8", buffering=1)
+            except Exception:
+                self.announcer.resume_after_recording()
+                raise
             command = [
                 sys.executable, str(PI_DIR / "runner.py"),
                 "--require-lora", "--imu-startup-timeout", "120",
@@ -160,6 +175,7 @@ class FieldController:
                 )
             except Exception:
                 handle.close()
+                self.announcer.resume_after_recording()
                 raise
             self.process = process
             self.log_handle = handle
@@ -200,11 +216,27 @@ class FieldController:
             elif self.last_exit_code is not None:
                 self.state = "failed"
             self.ended_at = self.ended_at or _utc_now()
+            self.announcer.resume_after_recording()
             return self.status()
 
 
-controller = FieldController()
+ANNOUNCER = TunnelPairingAnnouncer()
+controller = FieldController(ANNOUNCER)
 app = FastAPI(title="RobotCore Local Field Console", docs_url=None, redoc_url=None, openapi_url=None)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://robotcore-telemetry.vercel.app"],
+    allow_origin_regex=r"^http://(?:localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2[0-9]|3[01])(?:\.\d{1,3}){2})(?::\d+)?$",
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+    allow_credentials=False,
+)
+
+
+@app.on_event("startup")
+def startup_event() -> None:
+    if not ANNOUNCER.is_alive():
+        ANNOUNCER.start()
 
 
 @app.get("/", include_in_schema=False)
@@ -271,8 +303,17 @@ async def run_preflight() -> dict[str, Any]:
 
 
 @app.get("/api/preflight")
-async def preflight() -> dict[str, Any]:
+async def preflight(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    if not _authorized(authorization):
+        raise HTTPException(status_code=401, detail="Field-console token is missing or invalid.")
     return await run_preflight()
+
+
+@app.get("/api/connection")
+def connection_status(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    if not _authorized(authorization):
+        raise HTTPException(status_code=401, detail="Field-console token is missing or invalid.")
+    return ANNOUNCER.status()
 
 
 @app.get("/api/status")
@@ -307,6 +348,7 @@ def shutdown_event() -> None:
         controller.stop()
     except Exception:
         pass
+    ANNOUNCER.stop()
 
 
 def main() -> None:
