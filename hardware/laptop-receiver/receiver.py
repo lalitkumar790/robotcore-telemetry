@@ -5,6 +5,7 @@ import os
 import re
 import threading
 import time
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -12,6 +13,8 @@ from typing import Callable
 import serial
 from serial.tools import list_ports
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+from pairing_protocol import PairingError, decode_pairing_beacon, is_pairing_beacon
 from protocol import decode_packet
 
 GPS_VID_PID = (0x1A86, 0x7523)
@@ -58,12 +61,14 @@ def utc_iso() -> str:
 class ReceiverWorker(threading.Thread):
     """Single owner of the laptop receiver serial port, CSV log and packet stream."""
 
-    def __init__(self, port: str, log_dir: str, radio: dict, on_packet: Callable[[dict], None], on_status: Callable[[], None], experiment_id: str | None = None, managed_sessions: bool = False, auto_detect_port: bool = False):
+    def __init__(self, port: str, log_dir: str, radio: dict, on_packet: Callable[[dict], None], on_status: Callable[[], None], experiment_id: str | None = None, managed_sessions: bool = False, auto_detect_port: bool = False, on_pairing: Callable[[dict], None] | None = None, pairing_key: bytes | None = None):
         super().__init__(daemon=True, name="RobotCoreRadioReceiver")
         self.port_name = port
         self.experiment_id = (experiment_id or EXPERIMENT_ID or "UNLABELLED").strip()
         self.managed_sessions = managed_sessions
         self.auto_detect_port = auto_detect_port
+        self.on_pairing = on_pairing
+        self.pairing_key = pairing_key
         self.capture_active = not managed_sessions
         self.field_session_id: str | None = None
         self.log_dir = Path(log_dir).expanduser().resolve()
@@ -80,6 +85,11 @@ class ReceiverWorker(threading.Thread):
         self.last_packet_unix_ms: int | None = None
         self.last_rssi: int | None = None
         self.last_snr: int | None = None
+        self.pairing_received = 0
+        self.pairing_rejected = 0
+        self.last_pairing_unix_ms: int | None = None
+        self.last_pairing_device_id: str | None = None
+        self.last_pairing_error: str | None = None
         self.packets_received = 0
         self.packets_lost = 0
         self.packets_corrupt = 0
@@ -120,6 +130,12 @@ class ReceiverWorker(threading.Thread):
                 "last_packet_unix_ms": self.last_packet_unix_ms,
                 "last_rssi_dbm": self.last_rssi,
                 "last_snr_db": self.last_snr,
+                "pairing_key_configured": self.pairing_key is not None,
+                "pairing_received": self.pairing_received,
+                "pairing_rejected": self.pairing_rejected,
+                "last_pairing_unix_ms": self.last_pairing_unix_ms,
+                "last_pairing_device_id": self.last_pairing_device_id,
+                "last_pairing_error": self.last_pairing_error,
             }
 
     def _status_changed(self) -> None:
@@ -265,12 +281,48 @@ class ReceiverWorker(threading.Thread):
             self.last_sequence = sequence
             return lost_before, False, False
 
+    def _process_pairing_beacon(self, payload: bytes, rssi: int | None, snr: int | None, now_ms: int) -> None:
+        if self.pairing_key is None:
+            with self.lock:
+                self.pairing_rejected += 1
+                self.last_pairing_error = "Encrypted pairing beacon received, but laptop pairing key is not configured."
+            self._status_changed()
+            return
+        try:
+            descriptor = decode_pairing_beacon(payload, self.pairing_key)
+            received = {
+                **descriptor,
+                "rssi_dbm": rssi,
+                "snr_db": snr,
+                "received_at_unix_ms": now_ms,
+                "received_at_utc": utc_iso(),
+            }
+            with self.lock:
+                self.pairing_received += 1
+                self.last_pairing_unix_ms = now_ms
+                self.last_pairing_device_id = descriptor["device_id"]
+                self.last_pairing_error = None
+            if self.on_pairing is not None:
+                self.on_pairing(received)
+        except PairingError as error:
+            with self.lock:
+                self.pairing_rejected += 1
+                self.last_pairing_error = str(error)
+        except Exception as error:
+            with self.lock:
+                self.pairing_rejected += 1
+                self.last_pairing_error = f"{type(error).__name__}: {error}"
+        self._status_changed()
+
     def _process_packet(self, payload: bytes) -> None:
         now_ms = int(time.time() * 1000)
         # RSSI/SNR are emitted on the metadata line immediately before the payload.
         # Consume them exactly once so a malformed/absent metadata line cannot reuse stale values.
         rssi, snr = self._pending_rssi, self._pending_snr
         self._pending_rssi, self._pending_snr = None, None
+        if is_pairing_beacon(payload):
+            self._process_pairing_beacon(payload, rssi, snr, now_ms)
+            return
         try:
             record = decode_packet(payload)
         except ValueError as error:
