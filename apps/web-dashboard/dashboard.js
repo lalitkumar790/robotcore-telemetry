@@ -299,7 +299,7 @@ async function fieldStartPaired(){
  await fieldRefresh();
 }
 async function fieldStopPaired(){
- const f=S.field,pair=f.pairing;
+ const f=S.field,pair=f.pairing,sessionId=f.sessionId;
  if(!f.bridgeToken||!pair)throw Error("The paired Pi endpoint is unavailable. Reconnect to the Pi tunnel before stopping.");
  fieldSetMessage("Stopping the Pi transmitter first. The laptop CSV stays open until Pi stop is confirmed.","");
  await fieldFetch(pair.tunnel_url,"/api/session/stop",pair.control_token,{method:"POST"});
@@ -308,7 +308,7 @@ async function fieldStopPaired(){
  fieldSetMessage("Both recorders stopped. Retrieving the four session artifacts…","good");
  await fieldRefresh();
  try{
-  await fieldAutoLoadReplay(pair,f.sessionId||"");
+  await fieldAutoLoadReplay(pair,sessionId||"");
  }catch(syncError){
   fieldSetMessage("Both recorders stopped, but automatic file sync/replay did not complete: "+syncError.message+". The four files remain on the Pi/laptop; check session IDs and retry from the file comparison section.","error");
   toast("Capture stopped; automatic replay sync failed: "+syncError.message,true);
