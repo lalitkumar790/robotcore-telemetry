@@ -6,6 +6,7 @@ const S={
  lastPacketAt:0,lastGpsAt:0,lastGps:null,latest:null,latestImu:null,imuSource:null,imuHistory:[],lastLiveMapRecord:null,
  lora:{port:null,reader:null,readDone:null,running:false,connected:false,verified:false,rssi:null,snr:null,info:""},remote:{ws:null,connected:false,authenticated:false,wanted:false,url:"",token:"",lastMessageAt:0,lastTelemetryAt:0,serverStatus:null,reconnectTimer:null,retryMs:2000},protocolOk:null,
  imuDevice:null,imuCharacteristic:null,bleConnected:false,
+ field:{bridgeToken:"",pairing:null,piStatus:null,receiverStatus:null,active:false,sessionId:null,experimentId:null,lastError:null},
  recording:false,sessionId:null,sessionRecords:[],storedCount:0,chartMode:"link",follow:false,firstFix:true,
  routeA:null,routeB:null,cloud:[],yaw:-.68,pitch:.56,scale:1,drag:null,toastTimer:null
 };
@@ -91,10 +92,12 @@ function connectRemoteBridge(){
  if(S.lora.connected){toast("Disconnect the direct USB receiver before using the remote laptop feed.",true);return;}
  const raw=$("remoteBridgeUrl").value.trim(),token=$("remoteBridgeToken").value.trim();if(!raw||!token){setRemoteBridgeUi("Enter the tunnel URL and token from the laptop console.","error");return;}
  let url;try{url=new URL(raw);}catch(_){setRemoteBridgeUi("Tunnel URL is not valid.","error");return;}
- if(url.protocol!=="https:"||url.username||url.password||url.search||url.hash||!(url.pathname==="/"||url.pathname==="")){setRemoteBridgeUi("Use the HTTPS origin only, e.g. https://name.trycloudflare.com","error");return;}
+ const localHost=/^(10|127)\./.test(url.hostname)||/^192\.168\./.test(url.hostname)||/^172\.(1[6-9]|2[0-9]|3[01])\./.test(url.hostname)||url.hostname==="localhost"||url.hostname.endsWith(".local");
+ if((url.protocol!=="https:"&&!(url.protocol==="http:"&&localHost))||url.username||url.password||url.search||url.hash||!(url.pathname==="/"||url.pathname==="")){setRemoteBridgeUi("Use an HTTPS tunnel URL or a private-LAN laptop URL.","error");return;}
  if(S.remote.ws)try{S.remote.ws.close(1000,"replacing connection");}catch(_){}
  S.remote.url=url.origin;S.remote.token=token;S.remote.wanted=true;S.remote.connected=false;S.remote.authenticated=false;S.remote.serverStatus=null;if(S.remote.reconnectTimer){clearTimeout(S.remote.reconnectTimer);S.remote.reconnectTimer=null;}
- let ws;try{ws=new WebSocket("wss://"+url.host+"/ws");}catch(e){setRemoteBridgeUi("WebSocket failed: "+e.message,"error");return;}S.remote.ws=ws;setRemoteBridgeUi("Connecting to laptop receiver…");renderStatus();
+ const wsProtocol=url.protocol==="https:"?"wss:":"ws:";
+ let ws;try{ws=new WebSocket(wsProtocol+"//"+url.host+"/ws");}catch(e){setRemoteBridgeUi("WebSocket failed: "+e.message,"error");return;}S.remote.ws=ws;setRemoteBridgeUi("Connecting to laptop receiver…");renderStatus();
  ws.onopen=()=>{S.remote.retryMs=2000;try{ws.send(JSON.stringify({type:"auth",token:S.remote.token}));setRemoteBridgeUi("Authenticating with laptop bridge…");}catch(_){setRemoteBridgeUi("Could not send authentication.","error");}};
  ws.onmessage=event=>{let m;try{m=JSON.parse(event.data);}catch(_){return;}S.remote.lastMessageAt=Date.now();
   if(m.type==="auth_ok"){S.remote.authenticated=true;S.remote.connected=true;setRemoteBridgeUi("Authenticated · waiting for packets…","ok");updateMetrics();renderStatus();return;}
@@ -119,6 +122,150 @@ function connectRemoteBridge(){
  };
 }
 function disconnectRemoteBridge(){S.remote.wanted=false;if(S.remote.reconnectTimer){clearTimeout(S.remote.reconnectTimer);S.remote.reconnectTimer=null;}const ws=S.remote.ws;S.remote.ws=null;S.remote.connected=false;S.remote.authenticated=false;S.remote.token="";if(ws)try{ws.close(1000,"user disconnected");}catch(_){}setRemoteBridgeUi("Disconnected · laptop logging continues locally");updateMetrics();renderStatus();}
+function fieldSetMessage(message,kind){
+ const el=$("fieldSessionMessage");if(el){el.textContent=message;el.className="small-note"+(kind?" "+kind:"");}
+}
+function fieldSetPairBadge(text,kind){
+ const el=$("fieldPairBadge");if(!el)return;el.textContent=text;el.className="pill"+(kind?" "+kind:"");
+}
+async function fieldFetch(base,path,token,options){
+ const headers=Object.assign({},options&&options.headers||{});
+ if(token)headers.Authorization="Bearer "+token;
+ if(options&&options.body)headers["Content-Type"]="application/json";
+ const response=await fetch(base.replace(/\/+$/,"")+path,Object.assign({},options||{},{headers}));
+ const raw=await response.text();let body={};
+ try{body=raw?JSON.parse(raw):{};}catch(_){body={detail:raw};}
+ if(!response.ok){const d=body&&body.detail;throw Error(typeof d==="string"?d:JSON.stringify(d||("HTTP "+response.status)));}
+ return body;
+}
+function fieldUpdateControls(){
+ const f=S.field,rx=f.receiverStatus||{},pi=f.piStatus||{},paired=!!(f.pairing&&f.pairing.tunnel_url&&f.pairing.control_token);
+ const receiverReady=!!(rx.serial_connected&&rx.radio_configured);
+ const piRunning=pi.state==="running",rxRecording=!!rx.capture_active;
+ $("fieldStartBtn").disabled=!(paired&&receiverReady&&!piRunning&&!rxRecording);
+ $("fieldStopBtn").disabled=!(piRunning||rxRecording||f.active);
+}
+function fieldRender(){
+ const f=S.field,rx=f.receiverStatus||{},pi=f.piStatus||{},pair=f.pairing;
+ if(!f.bridgeToken){
+  fieldSetPairBadge("Open local laptop dashboard","warn");
+  $("fieldPairTitle").textContent="Automatic pairing is available on the laptop-hosted dashboard";
+  $("fieldPairMessage").textContent="Open http://<laptop-ip>:8765 after starting the laptop field station. The public Vercel page cannot directly discover a private laptop radio link.";
+  $("fieldReceiverStatus").textContent="Laptop receiver: not bootstrapped";
+  $("fieldPiStatus").textContent="Pi: waiting";
+  $("fieldPairMeta").textContent="This panel auto-connects when served by the laptop bridge. It does not store pairing keys in Vercel.";
+  fieldUpdateControls();return;
+ }
+ if(pair){
+  const tunnelState=pi.connection&&pi.connection.tunnel_state||"tunnel announced";
+  const age=pair.last_seen_at?Math.max(0,Math.round(Date.now()/1000-pair.last_seen_at))+" s since beacon":"beacon age unknown";
+  $("fieldPairTitle").textContent="Pi discovered · encrypted LoRa pairing received";
+  $("fieldPairMessage").textContent="Endpoint "+pair.tunnel_url+" · device "+pair.device_id+" · "+age+". The dashboard is now checking Pi sensors and laptop radio readiness.";
+  $("fieldPairMeta").textContent="Tunnel status: "+tunnelState+" · pairing token is held in memory only and never written to the experiment files.";
+  fieldSetPairBadge(pair.capture_active?"Paired · recording":"Paired · ready", "ready");
+ }else{
+  $("fieldPairTitle").textContent="Waiting for the Pi pairing beacon";
+  $("fieldPairMessage").textContent="The Pi checks for internet, starts its temporary HTTPS endpoint and sends its endpoint/token over an AES-GCM encrypted LoRa beacon. The laptop retries reception continuously.";
+  $("fieldPairMeta").textContent="The Pi and laptop must use the same pairing key. If the beacon is not arriving, check that the Pi has internet and the laptop LoRa-E5 is configured.";
+  fieldSetPairBadge("Not paired","warn");
+ }
+ $("fieldReceiverStatus").textContent="Laptop RX: "+(rx.serial_connected?(rx.radio_configured?"radio configured":"serial open · radio unverified"):"disconnected")+(rx.capture_active?" · recording":"");
+ $("fieldPiStatus").textContent="Pi: "+(pi.state||"not connected")+(pi.stage?" · "+pi.stage:"");
+ if(f.sessionId) $("fieldSessionIdentity").textContent="Session: "+f.sessionId+(f.experimentId?" · "+f.experimentId:"");
+ const files=[];
+ if(pi.mission_files)pi.mission_files.forEach(x=>files.push("Pi: "+x.name));
+ if(rx.log_file)files.push("Laptop: "+rx.log_file.split(/[\\/]/).pop());
+ if(files.length)$("fieldSessionFiles").textContent=files.join(" · ");
+ fieldUpdateControls();
+}
+async function fieldRefresh(){
+ const f=S.field;if(!f.bridgeToken)return;
+ try{
+  const [rx,pair]=await Promise.all([
+   fieldFetch(location.origin,"/api/status",f.bridgeToken),
+   fieldFetch(location.origin,"/api/pairing",f.bridgeToken)
+  ]);
+  f.receiverStatus=rx;
+  f.pairing=pair&&pair.paired?pair:null;
+  if(f.pairing){
+   const pi=await fieldFetch(f.pairing.tunnel_url,"/api/status",f.pairing.control_token);
+   f.piStatus=pi;
+   if(pi.state==="running"){f.active=true;f.sessionId=pi.session_id;f.experimentId=pi.experiment_id;}
+   else if(f.active&&pi.state!=="running"){f.active=false;fieldSetMessage("Pi is no longer recording; inspect its log before another run.","error");}
+   if(!S.remote.wanted&&!S.remote.connected&&!S.lora.connected){
+    $("remoteBridgeUrl").value=location.origin;
+    $("remoteBridgeToken").value=f.bridgeToken;
+    connectRemoteBridge();
+   }
+  }else{
+   f.piStatus=null;
+   if(!f.active)f.sessionId=null;
+  }
+  fieldRender();
+ }catch(e){
+  f.lastError=e.message;
+  if(!f.pairing){fieldSetPairBadge("Laptop / LoRa link unavailable","error");}
+  fieldSetMessage("Local field bridge or Pi tunnel is unreachable: "+e.message+". The Pi may continue recording locally; reconnect before stopping.","error");
+  fieldUpdateControls();
+ }
+}
+async function fieldStartPaired(){
+ const f=S.field;
+ if(!f.bridgeToken||!f.pairing)throw Error("No fresh encrypted Pi pairing beacon is available.");
+ const experimentId=$("fieldExperimentId").value.trim();
+ if(!/^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/.test(experimentId))throw Error("Use 3–80 letters, numbers, dots, underscores or dashes for the experiment label.");
+ const pairing=await fieldFetch(location.origin,"/api/pairing",f.bridgeToken);
+ if(!pairing.paired)throw Error("The Pi pairing beacon is stale. Wait for a new beacon before starting.");
+ const [preflight,receiver]=await Promise.all([
+  fieldFetch(pairing.tunnel_url,"/api/preflight",pairing.control_token),
+  fieldFetch(location.origin,"/api/status",f.bridgeToken)
+ ]);
+ if(!preflight.ok)throw Error("Pi preflight failed. Check GPS USB, LoRa-E5 TX and WT901BLE68 in the Pi status/log.");
+ if(!receiver.serial_connected||!receiver.radio_configured)throw Error("Laptop receiver is not ready. Check USB LoRa-E5 and radio configuration.");
+ if(receiver.capture_active)throw Error("A laptop CSV capture is already active. Stop and save it before starting another.");
+ const sessionId="RC-"+new Date().toISOString().replace(/[-:.TZ]/g,"").slice(0,14)+"-"+Math.random().toString(36).slice(2,7).toUpperCase();
+ let receiverStarted=false;
+ try{
+  await fieldFetch(location.origin,"/api/session/start",f.bridgeToken,{method:"POST",body:JSON.stringify({experiment_id:experimentId,session_id:sessionId})});
+  receiverStarted=true;
+  const pi=await fieldFetch(pairing.tunnel_url,"/api/session/start",pairing.control_token,{method:"POST",body:JSON.stringify({experiment_id:experimentId,session_id:sessionId})});
+  f.active=true;f.sessionId=sessionId;f.experimentId=experimentId;f.piStatus=pi;
+  $("fieldSessionIdentity").textContent="Session: "+sessionId+" · "+experimentId;
+  fieldSetMessage("Paired session started. Wait for the Pi log to say recording and for receiver packet counters to move before walking.","good");
+  toast("Started synchronized Pi mission and laptop receiver CSV.");
+ }catch(error){
+  if(receiverStarted){try{await fieldFetch(location.origin,"/api/session/stop",f.bridgeToken,{method:"POST",body:JSON.stringify({session_id:sessionId})});}catch(_){}}
+  throw error;
+ }
+ await fieldRefresh();
+}
+async function fieldStopPaired(){
+ const f=S.field,pair=f.pairing;
+ if(!f.bridgeToken||!pair)throw Error("The paired Pi endpoint is unavailable. Reconnect to the Pi tunnel before stopping.");
+ fieldSetMessage("Stopping the Pi transmitter first. The laptop CSV stays open until Pi stop is confirmed.","");
+ await fieldFetch(pair.tunnel_url,"/api/session/stop",pair.control_token,{method:"POST"});
+ await fieldFetch(location.origin,"/api/session/stop",f.bridgeToken,{method:"POST",body:JSON.stringify({session_id:f.sessionId||""})});
+ f.active=false;
+ fieldSetMessage("Both recorders stopped. Preserve the Pi .rcm, .events.jsonl, .manifest.json and matching laptop CSV together.","good");
+ await fieldRefresh();
+}
+function bindFieldSession(){
+ if(!window.ROBOTCORE_FIELD_BOOTSTRAP||!window.ROBOTCORE_FIELD_BOOTSTRAP.bridgeToken)return;
+ S.field.bridgeToken=window.ROBOTCORE_FIELD_BOOTSTRAP.bridgeToken;
+ $("fieldStartBtn").addEventListener("click",async()=>{
+  $("fieldStartBtn").disabled=true;
+  try{await fieldStartPaired();}catch(e){fieldSetMessage("Start failed: "+e.message,"error");toast("Could not start paired session: "+e.message,true);}
+  finally{fieldUpdateControls();}
+ });
+ $("fieldStopBtn").addEventListener("click",async()=>{
+  $("fieldStopBtn").disabled=true;
+  try{await fieldStopPaired();}catch(e){fieldSetMessage("Stop not confirmed: "+e.message+". Do not close the laptop receiver until both files are closed.","error");toast("Could not stop both recorders: "+e.message,true);}
+  finally{fieldUpdateControls();}
+ });
+ fieldSetMessage("Laptop dashboard bootstrap loaded. Waiting for encrypted LoRa pairing and device readiness.","");
+ fieldRefresh();
+ setInterval(fieldRefresh,3000);
+}
 function delay(ms){return new Promise(r=>setTimeout(r,ms));}
 async function serialWrite(port,command){const w=port.writable.getWriter();try{await w.write(new TextEncoder().encode(command+"\r\n"));}finally{w.releaseLock();}}
 async function connectLora(){if(S.remote.wanted||S.remote.connected||S.remote.ws){toast("Disconnect the remote laptop feed before selecting a direct USB receiver.",true);return;}if(!navigator.serial){toast("Web Serial requires a recent Chrome/Edge browser over HTTPS.",true);return;}if(S.lora.connected)return;let port;try{port=await navigator.serial.requestPort();await port.open({baudRate:9600,bufferSize:4096});const inf=port.getInfo?port.getInfo():{},ids=(inf.usbVendorId!=null?" VID 0x"+inf.usbVendorId.toString(16).padStart(4,"0"):"")+(inf.usbProductId!=null?" PID 0x"+inf.usbProductId.toString(16).padStart(4,"0"):"");S.lora.port=port;S.lora.connected=true;S.lora.running=true;S.lora.verified=false;S.lora.info="User-selected USB serial port"+(ids||" · USB IDs unavailable")+" · waiting for LoRa-E5 response";S.lora.readDone=readSerial(port);await serialWrite(port,"AT+MODE=TEST");await delay(350);await serialWrite(port,"AT+TEST=RFCFG,865,SF7,125,12,15,14,ON,OFF,OFF");await delay(500);await serialWrite(port,"AT+TEST=RXLRPKT");$("liveStatePill").textContent="Listening";toast("LoRa-E5 RX configured · 865 MHz / SF7 / BW125K · waiting for valid RTP frames.");renderStatus();}catch(e){if(port)try{await port.close();}catch(_){}S.lora.port=null;S.lora.connected=false;S.lora.running=false;S.lora.verified=false;renderStatus();toast("Could not open selected serial port: "+e.message,true);}}
