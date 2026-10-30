@@ -145,24 +145,29 @@ class FieldController:
                 raise HTTPException(status_code=409, detail="A field session is already running.")
             if not valid_id(experiment_id) or not valid_id(session_id):
                 raise HTTPException(status_code=422, detail="Experiment and session IDs may contain letters, numbers, dots, underscores and dashes only.")
-            if not self.announcer.pause_for_recording():
-                raise HTTPException(status_code=503, detail="Could not release the LoRa radio from pairing mode. Check the Pi connection status and retry.")
+
+            # Prepare the unique log before releasing the pairing radio. If storage
+            # fails, pairing continues instead of leaving the device without beaconing.
             MISSIONS_PATH.mkdir(parents=True, exist_ok=True)
             log_path = MISSIONS_PATH / ("session_" + _safe_name(session_id) + ".log")
             if log_path.exists():
-                self.announcer.resume_after_recording()
                 raise HTTPException(status_code=409, detail="This session ID already has a Pi run log. Generate a new session.")
+
             env = os.environ.copy()
             env["ROBOTCORE_EXPERIMENT_ID"] = experiment_id
             env["ROBOTCORE_SESSION_ID"] = session_id
             env["ROBOTCORE_MISSIONS_DIR"] = str(MISSIONS_PATH)
             if IMU_ADDRESS:
                 env["ROBOTCORE_IMU_ADDRESS"] = IMU_ADDRESS
-            try:
-                handle = log_path.open("x", encoding="utf-8", buffering=1)
-            except Exception:
-                self.announcer.resume_after_recording()
-                raise
+            handle = log_path.open("x", encoding="utf-8", buffering=1)
+            if not self.announcer.pause_for_recording():
+                handle.close()
+                try:
+                    log_path.unlink()
+                except OSError:
+                    pass
+                raise HTTPException(status_code=503, detail="Could not release the LoRa radio from pairing mode. Check the Pi connection status and retry.")
+
             command = [
                 sys.executable, str(PI_DIR / "runner.py"),
                 "--require-lora", "--imu-startup-timeout", "120",
@@ -176,6 +181,10 @@ class FieldController:
             except Exception:
                 handle.close()
                 self.announcer.resume_after_recording()
+                try:
+                    log_path.unlink()
+                except OSError:
+                    pass
                 raise
             self.process = process
             self.log_handle = handle
