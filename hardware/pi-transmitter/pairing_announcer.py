@@ -91,6 +91,8 @@ class TunnelPairingAnnouncer(threading.Thread):
             if closed:
                 return True
             time.sleep(0.05)
+        # A failed handoff must not leave the pairing agent permanently paused.
+        self.pause_event.clear()
         return False
 
     def resume_after_recording(self) -> None:
@@ -171,6 +173,7 @@ class TunnelPairingAnnouncer(threading.Thread):
         self._send_status_beacon()
 
         deadline = time.monotonic() + 60.0
+        self._last_status_beacon = time.monotonic()
         while not self.stop_event.is_set() and time.monotonic() < deadline:
             if process.poll() is not None:
                 self._set(
@@ -180,6 +183,9 @@ class TunnelPairingAnnouncer(threading.Thread):
                 )
                 self._stop_tunnel()
                 return False
+            if time.monotonic() - self._last_status_beacon >= self._status_beacon_interval:
+                self._last_status_beacon = time.monotonic()
+                self._send_status_beacon()
             try:
                 line = self._tunnel_output.get(timeout=0.5)
             except queue.Empty:
