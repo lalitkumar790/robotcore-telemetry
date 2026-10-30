@@ -11,6 +11,9 @@ from pairing_protocol import (
     decode_pairing_beacon,
     encode_pairing_beacon,
     is_pairing_beacon,
+    is_status_beacon,
+    encode_status_beacon,
+    decode_status_beacon,
     load_pairing_key,
 )
 
@@ -49,6 +52,40 @@ class PairingProtocolTests(unittest.TestCase):
         packet = encode_pairing_beacon(self.descriptor, self.key)
         with self.assertRaises(PairingError):
             decode_pairing_beacon(packet, self.key, now=self.descriptor["e"] + 1)
+
+    def test_status_beacon_round_trip_reports_internet_retry_without_credentials(self):
+        now = int(time.time())
+        status = {
+            "device_id": "pi-field-01",
+            "state": "waiting_for_internet",
+            "internet_connected": False,
+            "tunnel_state": "waiting_for_internet",
+            "last_error": "Internet probe timed out",
+            "issued_at": now,
+            "valid_until": now + 30,
+        }
+        packet = encode_status_beacon(status, self.key)
+        self.assertTrue(is_status_beacon(packet))
+        decoded = decode_status_beacon(packet, self.key)
+        self.assertEqual(decoded["state"], "waiting_for_internet")
+        self.assertFalse(decoded["internet_connected"])
+        self.assertEqual(decoded["last_error"], "Internet probe timed out")
+        self.assertNotIn("control_token", decoded)
+        self.assertLessEqual(len(packet), 250)
+
+    def test_status_beacon_rejects_wrong_key(self):
+        now = int(time.time())
+        status = {
+            "device_id": "pi-field-01",
+            "state": "connecting_tunnel",
+            "internet_connected": True,
+            "tunnel_state": "connecting",
+            "issued_at": now,
+            "valid_until": now + 30,
+        }
+        packet = encode_status_beacon(status, self.key)
+        with self.assertRaises(PairingError):
+            decode_status_beacon(packet, os.urandom(32))
 
     def test_key_loader_accepts_hex_and_base64(self):
         import base64
