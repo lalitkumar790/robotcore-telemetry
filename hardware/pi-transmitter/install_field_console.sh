@@ -6,6 +6,8 @@ VENV_PYTHON="$PI_DIR/.venv/bin/python"
 ENV_FILE="/etc/robotcore-field-console.env"
 UNIT_FILE="/etc/systemd/system/robotcore-field-console.service"
 OLD_UNIT="robotcore-transmitter.service"
+PAIRING_KEY_FILE="/etc/robotcore-pairing.key"
+DEVICE_ID_FILE="/etc/robotcore-device-id"
 
 if [[ ! -x "$VENV_PYTHON" ]]; then
   echo "Missing $VENV_PYTHON. Create the project venv and install hardware/pi-transmitter/requirements.txt first." >&2
@@ -42,6 +44,41 @@ if getent group bluetooth >/dev/null 2>&1 && ! id -nG "$SERVICE_USER" | tr ' ' '
   echo "[SETUP] Added $SERVICE_USER to bluetooth."
 fi
 
+# A shared 256-bit key encrypts the Pi's tunnel URL and bearer token before either is sent over LoRa.
+if [[ ! -f "$PAIRING_KEY_FILE" ]]; then
+  "$VENV_PYTHON" -c 'import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("="))' > "$PAIRING_KEY_FILE"
+  echo "[SETUP] Created a new encrypted LoRa pairing key."
+fi
+chmod 0600 "$PAIRING_KEY_FILE"
+chown "$SERVICE_USER:$SERVICE_GROUP" "$PAIRING_KEY_FILE"
+
+if [[ ! -f "$DEVICE_ID_FILE" ]]; then
+  "$VENV_PYTHON" -c 'import secrets; print("pi-" + secrets.token_hex(6))' > "$DEVICE_ID_FILE"
+fi
+DEVICE_ID="$(tr -d '\r\n' < "$DEVICE_ID_FILE")"
+
+# Install the official Cloudflare connector on supported Linux architectures when possible.
+if ! command -v cloudflared >/dev/null 2>&1; then
+  ARCH="$(dpkg --print-architecture 2>/dev/null || true)"
+  case "$ARCH" in
+    arm64) CLOUDFLARED_DEB="cloudflared-linux-arm64.deb" ;;
+    armhf) CLOUDFLARED_DEB="cloudflared-linux-armhf.deb" ;;
+    amd64) CLOUDFLARED_DEB="cloudflared-linux-amd64.deb" ;;
+    *) CLOUDFLARED_DEB="" ;;
+  esac
+  if [[ -n "$CLOUDFLARED_DEB" ]] && command -v curl >/dev/null 2>&1; then
+    echo "[SETUP] Downloading cloudflared for $ARCH..."
+    if curl -fL --retry 2 --connect-timeout 10 "https://github.com/cloudflare/cloudflared/releases/latest/download/$CLOUDFLARED_DEB" -o /tmp/cloudflared-robotcore.deb; then
+      dpkg -i /tmp/cloudflared-robotcore.deb || apt-get install -f -y
+      rm -f /tmp/cloudflared-robotcore.deb
+    else
+      echo "[WARN] cloudflared could not be downloaded now. The Pi will keep checking, but remote tunnel pairing needs cloudflared installed."
+    fi
+  else
+    echo "[WARN] Unsupported architecture or curl unavailable; install cloudflared to enable remote LoRa pairing."
+  fi
+fi
+
 mkdir -p "$PI_DIR/missions"
 chown "$SERVICE_USER:$SERVICE_GROUP" "$PI_DIR/missions"
 
@@ -60,6 +97,8 @@ ROBOTCORE_FIELD_CONTROL_TOKEN=$CONTROL_TOKEN
 ROBOTCORE_IMU_ADDRESS=$IMU_ADDRESS
 ROBOTCORE_MISSIONS_DIR=$MISSIONS_DIR
 ROBOTCORE_TX_INTERVAL=2.0
+ROBOTCORE_PAIRING_KEY_FILE=$PAIRING_KEY_FILE
+ROBOTCORE_DEVICE_ID=$DEVICE_ID
 EOF
   chmod 0600 "$ENV_FILE"
   chown root:root "$ENV_FILE"
@@ -68,6 +107,12 @@ else
   if ! grep -q '^ROBOTCORE_FIELD_CONTROL_TOKEN=' "$ENV_FILE"; then
     CONTROL_TOKEN="$("$VENV_PYTHON" -c 'import secrets; print(secrets.token_urlsafe(32))')"
     printf '\nROBOTCORE_FIELD_CONTROL_TOKEN=%s\n' "$CONTROL_TOKEN" >> "$ENV_FILE"
+  fi
+  if ! grep -q '^ROBOTCORE_PAIRING_KEY_FILE=' "$ENV_FILE"; then
+    printf '\nROBOTCORE_PAIRING_KEY_FILE=%s\n' "$PAIRING_KEY_FILE" >> "$ENV_FILE"
+  fi
+  if ! grep -q '^ROBOTCORE_DEVICE_ID=' "$ENV_FILE"; then
+    printf '\nROBOTCORE_DEVICE_ID=%s\n' "$DEVICE_ID" >> "$ENV_FILE"
   fi
   chmod 0600 "$ENV_FILE"
   chown root:root "$ENV_FILE"
@@ -114,6 +159,7 @@ systemctl enable --now robotcore-field-console.service
 
 PI_IPS="$(hostname -I 2>/dev/null || true)"
 TOKEN="$(sed -n 's/^ROBOTCORE_FIELD_CONTROL_TOKEN=//p' "$ENV_FILE" | tail -n 1)"
+PAIRING_KEY="$(tr -d '\r\n' < "$PAIRING_KEY_FILE")"
 
 echo
 echo "RobotCore Field Console installed and started."
