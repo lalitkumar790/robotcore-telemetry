@@ -324,12 +324,13 @@ function parseRxCsv(text){
 async function parsePiSidecar(file){
  if(!file)return null;
  const text=await file.text(),lines=text.split(/\r?\n/),samples=[],lastBySequence=new Map();
- let experimentId="",sessionId="",badLines=0;
+ let experimentId="",sessionId="",radioConfig=null,badLines=0;
  for(let i=0;i<lines.length;i++){
   const line=lines[i].trim();if(!line)continue;
   let event;try{event=JSON.parse(line);}catch(_){badLines++;continue;}
   if(!experimentId&&event.experiment_id)experimentId=String(event.experiment_id);
   if(!sessionId&&event.session_id)sessionId=String(event.session_id);
+  if(event.event==="mission_started"&&event.radio_config)radioConfig=event.radio_config;
   const seq=Number(event.sequence),timestampUnix=Number(event.timestamp_unix);
   if(event.event==="sample_recorded"&&Number.isFinite(seq)){
    const item={
@@ -353,7 +354,7 @@ async function parsePiSidecar(file){
   }
  }
  if(!samples.length)throw Error("Pi event sidecar contains no sample_recorded events.");
- return{fileName:file.name,experimentId,sessionId,samples,badLines};
+ return{fileName:file.name,experimentId,sessionId,radioConfig,samples,badLines};
 }
 function decodeMissionPacket(b){if(b.length!==35||b[0]!==0xaa||b[1]!==2||b[2]!==6)throw Error("Expected RTPv2 RobotState packet");if(crc16(b,33)!==((b[33]<<8)|b[34]))throw Error("mission CRC mismatch");const d=new DataView(b.buffer,b.byteOffset,b.byteLength);return{sequence:d.getUint16(3,false),latitude:d.getInt32(5,false)/1e6,longitude:d.getInt32(9,false)/1e6,speed:d.getUint16(13,false)/100,ax:d.getInt16(15,false)/1000,ay:d.getInt16(17,false)/1000,az:d.getInt16(19,false)/1000,gx:d.getInt16(21,false)/10,gy:d.getInt16(23,false)/10,gz:d.getInt16(25,false)/10,roll:d.getInt16(27,false)/100,pitch:d.getInt16(29,false)/100,yaw:d.getInt16(31,false)/100,received:false,source:"pi-mission"};}
 async function parseRcm(file){const b=new Uint8Array(await file.arrayBuffer());if(b.length<13||b[0]!==0x52||b[1]!==0x43||b[2]!==0x4d||b[3]!==0x31)throw Error("Bad RCM header. Select a Pi transmitter .rcm file.");const d=new DataView(b.buffer,b.byteOffset,b.byteLength),version=b[4],start=d.getFloat64(5,false);if(version!==1)throw Error("Unsupported RCM format version "+version);const count=Math.floor((b.length-13)/35),remainder=(b.length-13)%35,records=[];for(let i=0;i<count;i++){const packet=b.slice(13+i*35,13+(i+1)*35);try{const r=decodeMissionPacket(packet);r.index=i;r.missionStartTime=start;records.push(r);}catch(e){records.push({index:i,sequence:(packet[3]<<8)|packet[4],latitude:null,longitude:null,received:false,invalid:true,error:e.message,source:"pi-mission"});}}if(!records.length)throw Error("No complete mission samples were found.");return{fileName:file.name,formatVersion:version,startTime:start,records,remainder,rawBytes:b.length};}
@@ -400,7 +401,7 @@ function alignMission(m,rx,sidecar){
  m.duplicates=duplicateRx;m.unmatched=unmatched;m.wraps=wraps;m.receiverCount=rx.records.length;
  m.sidecarLoaded=!!sidecar;m.sidecarFile=sidecar?sidecar.fileName:null;m.sidecarMatched=sidecarMatched;
  m.experimentId=sidecar?sidecar.experimentId:"";m.receiverExperimentId=rx.experimentId||"";m.rxSessionId=rx.rxSessionId||"";
- m.sessionId=sidecar?sidecar.sessionId:"";m.receiverFieldSessionId=rx.fieldSessionId||"";
+ m.sessionId=sidecar?sidecar.sessionId:"";m.receiverFieldSessionId=rx.fieldSessionId||"";m.radioConfig=sidecar?sidecar.radioConfig:null;m.receiverFileName=rx.fileName||"";
  m.sessionVerified=!!(m.sessionId&&m.receiverFieldSessionId&&m.sessionId===m.receiverFieldSessionId);
  m.sessionMismatch=!!(m.sessionId&&m.receiverFieldSessionId&&m.sessionId!==m.receiverFieldSessionId);
  m.sidecarMismatch=!!(m.experimentId&&m.receiverExperimentId&&m.experimentId!=="UNLABELLED"&&m.receiverExperimentId!=="UNLABELLED"&&m.experimentId!==m.receiverExperimentId);
@@ -497,6 +498,198 @@ function exportLoss(){
  if(!rows.length){toast("Run a comparison before exporting the loss map.",true);return;}
  const h=Object.keys(rows[0]);download(new Blob([h.join(",")+"\r\n"+rows.map(r=>h.map(k=>csvCell(r[k])).join(",")).join("\r\n")],{type:"text/csv;charset=utf-8"}),"robotcore_loss_map_"+new Date().toISOString().replace(/[:.]/g,"-")+".csv");
  toast("Exported "+rows.length+" Pi samples with received/lost labels and transmitter-side outcome evidence where available.");
+}
+function replayRoute(){
+ return $("replayRoute").value==="B"?S.routeB:S.routeA;
+}
+function replayStop(){
+ if(S.replay.timer){clearTimeout(S.replay.timer);S.replay.timer=null;}
+ S.replay.playing=false;
+ const b=$("replayPlayBtn");if(b)b.textContent="▶ Play";
+}
+function replaySetAvailability(enabled){
+ ["replayPlayBtn","replayPrevBtn","replayNextBtn","replaySeek","exportMergedBtn"].forEach(id=>$(id).disabled=!enabled);
+}
+function replayTimeLabel(r){
+ if(Number.isFinite(r.txTimestampUnix))return new Date(r.txTimestampUnix*1000).toISOString();
+ return "Sample-index timeline · no per-sample TX timestamp in RCM";
+}
+function replayRender(){
+ const route=replayRoute(),records=route&&route.records||[];
+ if(!records.length){
+  $("replayProgress").textContent="0 / 0";$("replaySequence").textContent="—";
+  $("replayTimestamp").textContent="Timestamp unavailable";$("replayOutcome").textContent="—";
+  $("replayLossClass").textContent="No merged sample";$("replayRssi").textContent="—";
+  $("replaySnr").textContent="SNR —";$("replayCoords").textContent="—";
+  $("replayDistance").textContent="Distance —";$("replayImuHealth").textContent="—";
+  $("replayImuAge").textContent="Sensor sample age —";$("replayAttitude").textContent="—";
+  $("replayMotion").textContent="Accel / gyro —";
+  if(S.replayLayer)S.replayLayer.clearLayers();
+  return;
+ }
+ S.replay.index=Math.max(0,Math.min(records.length-1,S.replay.index));
+ const r=records[S.replay.index],received=!!r.received;
+ $("replaySeek").max=String(Math.max(0,records.length-1));
+ $("replaySeek").value=String(S.replay.index);
+ $("replayProgress").textContent=(S.replay.index+1)+" / "+records.length;
+ $("replaySequence").textContent=Number.isFinite(r.sequence)?String(r.sequence):"Invalid";
+ $("replayTimestamp").textContent=replayTimeLabel(r);
+ $("replayOutcome").textContent=r.invalid?"INVALID":received?"RECEIVED":"NOT RECEIVED";
+ $("replayLossClass").textContent=(r.lossClass||"unattributed")+" · TX "+(r.txOutcome||"unknown");
+ $("replayRssi").textContent=received&&Number.isFinite(r.rssi)?r.rssi+" dBm":"— dBm";
+ $("replaySnr").textContent=received&&Number.isFinite(r.snr)?"SNR "+r.snr+" dB":"SNR —";
+ $("replayCoords").textContent=validGps(r.latitude,r.longitude)?r.latitude.toFixed(6)+", "+r.longitude.toFixed(6):"No valid GPS";
+ $("replayDistance").textContent=Number.isFinite(r.distanceM)?"Distance "+r.distanceM.toFixed(1)+" m":"Distance unavailable";
+ $("replayImuHealth").textContent=r.sidecarMatched?(r.imuConnected?"Fresh at TX sample":"Missing / stale"):"Unverified";
+ $("replayImuAge").textContent=Number.isFinite(r.imuAgeS)?"Sensor sample age "+r.imuAgeS.toFixed(3)+" s":(r.sidecarMatched?"Sensor age unavailable":"No Pi event sidecar");
+ $("replayAttitude").textContent=[r.roll,r.pitch,r.yaw].every(Number.isFinite)?r.roll.toFixed(1)+"° / "+r.pitch.toFixed(1)+"° / "+r.yaw.toFixed(1)+"°":"—";
+ $("replayMotion").textContent=[r.ax,r.ay,r.az].every(Number.isFinite)?"Accel "+r.ax.toFixed(2)+", "+r.ay.toFixed(2)+", "+r.az.toFixed(2)+" g":"Accel / gyro unavailable";
+ $("replayTag").textContent=route.sessionVerified?"Session ID verified":route.sessionMismatch?"Session ID mismatch":"Session ID unverified";
+ if(S.replayLayer){
+  S.replayLayer.clearLayers();
+  if(S.map&&validGps(r.latitude,r.longitude)){
+   const color=r.invalid?"#f8bd70":received?"#65e0d4":"#ff8e9b";
+   L.circleMarker([r.latitude,r.longitude],{radius:11,color:"#ffffff",fillColor:color,fillOpacity:1,weight:3})
+    .bindPopup("<b>Replay sample "+(S.replay.index+1)+"</b><br>Sequence "+esc(r.sequence)+"<br>"+(received?"Received":"Not received")+"<br>"+esc(r.lossClass||"unknown")).addTo(S.replayLayer);
+  }
+ }
+}
+function replayStep(delta){
+ replayStop();
+ const route=replayRoute();if(!route||!route.records.length)return;
+ S.replay.index=Math.max(0,Math.min(route.records.length-1,S.replay.index+delta));
+ replayRender();
+}
+function replayDelay(route,from,to){
+ const speed=Math.max(.25,Number($("replaySpeed").value)||1);
+ const a=route.records[from],b=route.records[to];
+ if(Number.isFinite(a.txTimestampUnix)&&Number.isFinite(b.txTimestampUnix)){
+  const delta=(b.txTimestampUnix-a.txTimestampUnix)*1000;
+  if(delta>0)return Math.max(80,Math.min(12000,delta/speed));
+ }
+ return 1000/speed;
+}
+function replaySchedule(){
+ const route=replayRoute();
+ if(!S.replay.playing||!route)return;
+ if(S.replay.index>=route.records.length-1){replayStop();return;}
+ const next=S.replay.index+1,delayMs=replayDelay(route,S.replay.index,next);
+ S.replay.timer=setTimeout(()=>{
+  S.replay.timer=null;
+  if(!S.replay.playing)return;
+  S.replay.index=next;replayRender();replaySchedule();
+ },delayMs);
+}
+function replayToggle(){
+ const route=replayRoute();if(!route||!route.records.length)return;
+ if(S.replay.playing){replayStop();return;}
+ if(S.replay.index>=route.records.length-1)S.replay.index=0;
+ S.replay.playing=true;$("replayPlayBtn").textContent="Ⅱ Pause";
+ replayRender();replaySchedule();
+}
+function setupReplay(which){
+ replayStop();
+ const select=$("replayRoute");
+ const hasB=!!(S.routeB&&S.routeB.records&&S.routeB.records.length);
+ select.querySelector('option[value="B"]').disabled=!hasB;
+ if(which==="B"&&hasB)select.value="B";else if(!hasB)select.value="A";
+ S.replay.route=select.value;S.replay.index=0;
+ const route=replayRoute(),enabled=!!(route&&route.records&&route.records.length);
+ replaySetAvailability(enabled);
+ $("replayTag").textContent=route?(route.sessionVerified?"Session ID verified":route.sessionMismatch?"Session ID mismatch":"Session ID unverified"):"No merged session";
+ $("replayStatus").textContent=route?(route.sessionVerified?"Pi and receiver field-session IDs match.":route.sessionMismatch?"Warning: selected Pi and receiver files have different session IDs.":"The pairing could not be verified from session IDs; check the source files."):"Analyze a matching Pi mission and receiver CSV above.";
+ replayRender();
+}
+function exportMergedSession(){
+ const route=replayRoute();
+ if(!route||!route.records||!route.records.length){toast("Analyze a session before exporting merged data.",true);return;}
+ const records=route.records.map((r,index)=>{
+  const imuVerified=r.sidecarMatched&&r.imuConnected===true;
+  return{
+   sample_index:index,
+   sequence:Number.isFinite(r.sequence)?r.sequence:null,
+   tx_timestamp_utc:r.txTimestampUtc||null,
+   tx_timestamp_unix:r.txTimestampUnix==null?null:r.txTimestampUnix,
+   tx_result_timestamp_utc:r.txResultTimeUtc||null,
+   tx_result_timestamp_unix:r.txResultTimeUnix==null?null:r.txResultTimeUnix,
+   gps:{
+    valid:r.gpsValidFromPi==null?validGps(r.latitude,r.longitude):r.gpsValidFromPi,
+    latitude:Number.isFinite(r.latitude)?r.latitude:null,
+    longitude:Number.isFinite(r.longitude)?r.longitude:null,
+    speed_kmh:Number.isFinite(r.speed)?r.speed:null
+   },
+   imu:{
+    health_verified:!!r.sidecarMatched,
+    connected_at_sample:r.sidecarMatched?!!r.imuConnected:null,
+    sample_age_s:Number.isFinite(r.imuAgeS)?r.imuAgeS:null,
+    error:r.imuError||null,
+    ax_g:imuVerified&&Number.isFinite(r.ax)?r.ax:null,
+    ay_g:imuVerified&&Number.isFinite(r.ay)?r.ay:null,
+    az_g:imuVerified&&Number.isFinite(r.az)?r.az:null,
+    gx_deg_s:imuVerified&&Number.isFinite(r.gx)?r.gx:null,
+    gy_deg_s:imuVerified&&Number.isFinite(r.gy)?r.gy:null,
+    gz_deg_s:imuVerified&&Number.isFinite(r.gz)?r.gz:null,
+    roll_deg:imuVerified&&Number.isFinite(r.roll)?r.roll:null,
+    pitch_deg:imuVerified&&Number.isFinite(r.pitch)?r.pitch:null,
+    yaw_deg:imuVerified&&Number.isFinite(r.yaw)?r.yaw:null,
+    wire_values_unverified:!r.sidecarMatched
+   },
+   transmitter:{
+    tx_outcome:r.txOutcome||"unknown",
+    tx_error:r.txError||null,
+    modem_response:r.txResponse||null,
+    tx_done_is_receiver_ack:false
+   },
+   receiver:{
+    received:!!r.received,
+    receive_timestamp_utc:r.receiveTime||null,
+    receive_epoch_ms:Number.isFinite(r.receiveUnixMs)?r.receiveUnixMs:null,
+    rssi_dbm:Number.isFinite(r.rssi)?r.rssi:null,
+    snr_db:Number.isFinite(r.snr)?r.snr:null,
+    lost_before:Number.isFinite(r.lostBefore)?r.lostBefore:null
+   },
+   loss_class:r.lossClass||(!r.received?"not_received_unattributed":"received"),
+   distance_from_start_m:Number.isFinite(r.distanceM)?Number(r.distanceM.toFixed(3)):null,
+   distance_segment_index:Number.isFinite(r.segment)?r.segment:null,
+   invalid_mission_sample:!!r.invalid
+  };
+ });
+ const summary={
+  mission_samples:records.length,
+  valid_samples:records.filter(r=>!r.invalid_mission_sample).length,
+  received_samples:route.matched,
+  missing_samples:route.lost,
+  observed_pdr_percent:route.pdr,
+  mean_received_rssi_dbm:route.meanRssi,
+  mean_received_snr_db:route.meanSnr,
+  session_verified:!!route.sessionVerified,
+  session_mismatch:!!route.sessionMismatch
+ };
+ const merged={
+  schema_version:"robotcore.merged-session.v1",
+  generated_at_utc:new Date().toISOString(),
+  provenance:{
+   pi_mission_file:route.fileName||null,
+   pi_events_file:route.sidecarFile||null,
+   laptop_receiver_file:route.receiverFileName||null,
+   experiment_id:route.experimentId||"",
+   receiver_experiment_id:route.receiverExperimentId||"",
+   pi_session_id:route.sessionId||"",
+   receiver_session_id:route.receiverFieldSessionId||"",
+   session_verified:!!route.sessionVerified,
+   session_mismatch:!!route.sessionMismatch,
+   sidecar_present:!!route.sidecarLoaded,
+   timestamp_basis:route.sidecarLoaded?"Pi JSONL sample_recorded timestamps":"sample index only; RCM contains no per-sample timestamp",
+   alignment_warning:route.alignmentWarning||null,
+   radio_config:route.radioConfig||null
+  },
+  summary,
+  records
+ };
+ const name=(route.sessionId||route.experimentId||"unlabelled").replace(/[^A-Za-z0-9_-]+/g,"-");
+ download(new Blob([JSON.stringify(merged,null,2)],{type:"application/json;charset=utf-8"}),"robotcore_merged_"+name+".json");
+ $("replayStatus").textContent="Exported "+records.length+" aligned samples. Session ID "+(route.sessionVerified?"verified":"not verified")+"; timestamp basis: "+merged.provenance.timestamp_basis+".";
+ toast("Exported merged JSON. Check provenance.session_verified before using it as ML training truth.");
 }
 function clearComparison(){S.routeA=null;S.routeB=null;if(S.compareLayer)S.compareLayer.clearLayers();["missionA","receiverA","eventsA","missionB","receiverB","eventsB"].forEach(id=>$(id).value="");["pdrA","lostA","pdrB","lostB"].forEach(id=>$(id).textContent="—");$("exportLossBtn").disabled=true;$("compareStatus").textContent="Files are parsed locally in this browser."; $("segmentRows").innerHTML='<tr><td colspan="6" class="muted">No comparison computed yet.</td></tr>';$("mapModeTag").textContent="MANIT / live";updateRouteStatus();verdict();cloudData();drawCloud();centerManit();}
 function deviceCard(name,status,sub,act,label,act2,label2){const cls=status.indexOf("Connected")===0||status==="Recording"||status==="Available"?"ok":status==="Waiting"||status==="Unsupported"?"warn":"";return'<div class="device-card"><div class="device-title"><strong>'+esc(name)+'</strong><span class="badge '+cls+'">'+esc(status)+'</span></div><div class="device-sub">'+esc(sub)+'</div><div class="device-actions">'+(act?'<button class="btn small" data-action="'+act+'">'+esc(label||act)+'</button>':"")+(act2?'<button class="btn small secondary" data-action="'+act2+'">'+esc(label2||act2)+'</button>':"")+'</div></div>';}
