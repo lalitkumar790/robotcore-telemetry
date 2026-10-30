@@ -6,7 +6,7 @@ const S={
  lastPacketAt:0,lastGpsAt:0,lastGps:null,latest:null,latestImu:null,imuSource:null,imuHistory:[],lastLiveMapRecord:null,
  lora:{port:null,reader:null,readDone:null,running:false,connected:false,verified:false,rssi:null,snr:null,info:""},remote:{ws:null,connected:false,authenticated:false,wanted:false,url:"",token:"",lastMessageAt:0,lastTelemetryAt:0,serverStatus:null,reconnectTimer:null,retryMs:2000},protocolOk:null,
  imuDevice:null,imuCharacteristic:null,bleConnected:false,
- field:{bridgeToken:"",pairing:null,piStatus:null,receiverStatus:null,active:false,sessionId:null,experimentId:null,lastError:null},
+ field:{bridgeToken:"",pairing:null,piBeaconStatus:null,piStatus:null,receiverStatus:null,active:false,sessionId:null,experimentId:null,lastError:null},
  recording:false,sessionId:null,sessionRecords:[],storedCount:0,chartMode:"link",follow:false,firstFix:true,
  routeA:null,routeB:null,replay:{route:"A",index:0,playing:false,timer:null},cloud:[],yaw:-.68,pitch:.56,scale:1,drag:null,toastTimer:null
 };
@@ -165,10 +165,18 @@ function fieldRender(){
   $("fieldPairMeta").textContent="Tunnel status: "+tunnelState+" · pairing token is held in memory only and never written to the experiment files.";
   fieldSetPairBadge(pair.capture_active?"Paired · recording":"Paired · ready", "ready");
  }else{
-  $("fieldPairTitle").textContent="Waiting for the Pi pairing beacon";
-  $("fieldPairMessage").textContent="The Pi checks for internet, starts its temporary HTTPS endpoint and sends its endpoint/token over an AES-GCM encrypted LoRa beacon. The laptop retries reception continuously.";
-  $("fieldPairMeta").textContent="The Pi and laptop must use the same pairing key. If the beacon is not arriving, check that the Pi has internet and the laptop LoRa-E5 is configured.";
-  fieldSetPairBadge("Not paired","warn");
+  const hb=f.piBeaconStatus;
+  if(hb){
+   $("fieldPairTitle").textContent="Pi is online on LoRa · "+(hb.state||"status received");
+   $("fieldPairMessage").textContent="Pi internet: "+(hb.internet_connected?"available":"not detected yet")+" · tunnel: "+(hb.tunnel_state||"unknown")+". "+(hb.last_error||"The Pi is retrying its connection process and will announce a secure endpoint when ready.");
+   $("fieldPairMeta").textContent="Last Pi status beacon "+(hb.received_at_utc||"recently")+" · LoRa RSSI "+(Number.isFinite(hb.rssi_dbm)?hb.rssi_dbm+" dBm":"unknown")+". Start stays locked until the URL/token pairing beacon arrives.";
+   fieldSetPairBadge(hb.internet_connected?"Tunnel setup pending":"Waiting for internet","warn");
+  }else{
+   $("fieldPairTitle").textContent="Waiting for a Pi LoRa health beacon";
+   $("fieldPairMessage").textContent="The Pi service is expected to check internet periodically and send encrypted health beacons. Once internet is available it starts the temporary HTTPS endpoint and announces the endpoint/token separately.";
+   $("fieldPairMeta").textContent="No recent Pi health beacon is visible. Check laptop LoRa-E5 serial/radio status and the Pi service power/network.";
+   fieldSetPairBadge("No Pi beacon","warn");
+  }
  }
  const pairingStatus=rx.pairing||{};
  $("fieldReceiverStatus").textContent="Laptop RX: "+(rx.serial_connected?(rx.radio_configured?"radio configured":"serial open · radio unverified"):"disconnected")+(rx.capture_active?" · recording":"")+(pairingStatus.received?" · beacon from "+(pairingStatus.device_id||"Pi"):" · waiting for LoRa beacon");
@@ -192,6 +200,11 @@ async function fieldRefresh(){
    fieldFetch(location.origin,"/api/pairing",f.bridgeToken)
   ]);
   f.receiverStatus=rx;
+  f.piBeaconStatus=pair&&pair.pi_status&&!pair.pi_status.stale?pair.pi_status.status:null;
+  if(f.piBeaconStatus){
+   f.piBeaconStatus.received_at_utc=pair.pi_status.last_seen_at?new Date(pair.pi_status.last_seen_at*1000).toISOString():null;
+   f.piBeaconStatus.rssi_dbm=f.piBeaconStatus.rssi_dbm==null?null:f.piBeaconStatus.rssi_dbm;
+  }
   f.pairing=pair&&pair.paired?pair:null;
   if(f.pairing){
    const pi=await fieldFetch(f.pairing.tunnel_url,"/api/status",f.pairing.control_token);
