@@ -8,7 +8,7 @@ const S={
  imuDevice:null,imuCharacteristic:null,bleConnected:false,
  field:{bridgeToken:"",pairing:null,piStatus:null,receiverStatus:null,active:false,sessionId:null,experimentId:null,lastError:null},
  recording:false,sessionId:null,sessionRecords:[],storedCount:0,chartMode:"link",follow:false,firstFix:true,
- routeA:null,routeB:null,cloud:[],yaw:-.68,pitch:.56,scale:1,drag:null,toastTimer:null
+ routeA:null,routeB:null,replay:{route:"A",index:0,playing:false,timer:null},cloud:[],yaw:-.68,pitch:.56,scale:1,drag:null,toastTimer:null
 };
 let dbPromise=null;
 
@@ -36,7 +36,7 @@ function validGps(a,b){return Number.isFinite(a)&&Number.isFinite(b)&&a>=-90&&a<
 function rssiColor(n){if(!Number.isFinite(n))return "#91a3b9";if(n>=-85)return "#2ecc71";if(n>=-95)return "#f1c40f";if(n>=-105)return "#e67e22";if(n>=-115)return "#e74c3c";return "#7f0000";}
 function gapInfo(prev,cur){if(prev==null||cur==null)return{delta:1,lost:0,ordered:true,duplicate:false};const d=((cur-prev)%65535+65535)%65535;if(!d)return{delta:0,lost:0,ordered:false,duplicate:true};if(d>32768)return{delta:d,lost:0,ordered:false,duplicate:false};return{delta:d,lost:Math.max(0,d-1),ordered:d===1,duplicate:false};}
 function dist(a,b){if(!a||!b||!validGps(a.latitude,a.longitude)||!validGps(b.latitude,b.longitude))return Infinity;const rad=Math.PI/180,p1=a.latitude*rad,p2=b.latitude*rad,dp=(b.latitude-a.latitude)*rad,dl=(b.longitude-a.longitude)*rad,x=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return 6371000*2*Math.atan2(Math.sqrt(x),Math.sqrt(Math.max(0,1-x)));}
-function initMap(){if(!window.L){$("liveMap").innerHTML='<div class="empty"><div><strong>Map library unavailable</strong>Reload with internet access to load map tiles.</div></div>';return;}S.map=L.map("liveMap",{zoomControl:true,preferCanvas:true}).setView([MANIT.lat,MANIT.lon],MANIT.zoom);L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:20,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'}).addTo(S.map);L.circleMarker([MANIT.lat,MANIT.lon],{radius:7,color:"#80b9ff",fillColor:"#80b9ff",fillOpacity:.35,weight:2}).bindPopup("<b>MANIT Bhopal</b><br><small>Campus reference point · not a live sensor fix.</small>").addTo(S.map);S.liveLayer=L.layerGroup().addTo(S.map);S.compareLayer=L.layerGroup().addTo(S.map);}
+function initMap(){if(!window.L){$("liveMap").innerHTML='<div class="empty"><div><strong>Map library unavailable</strong>Reload with internet access to load map tiles.</div></div>';return;}S.map=L.map("liveMap",{zoomControl:true,preferCanvas:true}).setView([MANIT.lat,MANIT.lon],MANIT.zoom);L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:20,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'}).addTo(S.map);L.circleMarker([MANIT.lat,MANIT.lon],{radius:7,color:"#80b9ff",fillColor:"#80b9ff",fillOpacity:.35,weight:2}).bindPopup("<b>MANIT Bhopal</b><br><small>Campus reference point · not a live sensor fix.</small>").addTo(S.map);S.liveLayer=L.layerGroup().addTo(S.map);S.compareLayer=L.layerGroup().addTo(S.map);S.replayLayer=L.layerGroup().addTo(S.map);}
 function centerManit(){if(S.map)S.map.setView([MANIT.lat,MANIT.lon],MANIT.zoom);}
 function clearLiveMap(){if(S.liveLayer)S.liveLayer.clearLayers();S.liveMapLayers=[];S.lastLiveMapRecord=null;S.firstFix=true;$("mapOverlayLabel").textContent="MANIT Bhopal · live trail cleared";$("mapStatus").textContent="Map cleared; capture data remains unchanged";}
 function mapLivePoint(r){
@@ -294,25 +294,66 @@ function parseCsv(text){const rows=[];let row=[],field="",q=false;text=text.repl
 function norm(v){return String(v||"").trim().toLowerCase().replace(/[^a-z0-9]+/g,"");}
 function col(h,choices,includes){const a=h.map(norm);for(const c of choices){const i=a.indexOf(norm(c));if(i>=0)return i;}return includes?a.findIndex(v=>v.includes(includes)):-1;}
 function num(v){if(v==null||String(v).trim()==="")return null;const n=Number(String(v).replace(/,/g,"").trim());return Number.isFinite(n)?n:null;}
-function parseRxCsv(text){const rows=parseCsv(text);if(rows.length<2)throw Error("Receiver CSV has no data rows.");const h=rows[0].map(v=>String(v).trim()),c={seq:col(h,["Sequence","Seq","Packet Sequence"]),lat:col(h,["Latitude","Lat"]),lon:col(h,["Longitude","Lon","Lng"]),rssi:col(h,["RSSI (dBm)","RSSI dBm","RSSI"],"rssi"),snr:col(h,["SNR (dB)","SNR dB","SNR"],"snr"),time:col(h,["RX Time UTC","PC Timestamp","Timestamp","Laptop receive timestamp","Receive Timestamp"],"timestamp"),speed:col(h,["Speed (km/h)","Speed km/h","Speed"],"speed"),experiment:col(h,["Experiment ID"]),session:col(h,["RX Session ID"])};if(c.seq<0)throw Error("Receiver CSV needs a Sequence column for Pi mission matching.");const rec=rows.slice(1).map((r,i)=>({sequence:num(r[c.seq])==null?null:(num(r[c.seq])>>>0),latitude:c.lat>=0?num(r[c.lat]):null,longitude:c.lon>=0?num(r[c.lon]):null,rssi:c.rssi>=0?num(r[c.rssi]):null,snr:c.snr>=0?num(r[c.snr]):null,receiveTime:c.time>=0?String(r[c.time]||""):null,speed:c.speed>=0?num(r[c.speed]):null,sourceRow:i+2})).filter(r=>r.sequence!=null);if(!rec.length)throw Error("No numeric packet sequence values found.");return{records:rec,headers:h,experimentId:c.experiment>=0?String(rows[1][c.experiment]||"").trim():"",rxSessionId:c.session>=0?String(rows[1][c.session]||"").trim():""};}
+function parseRxCsv(text){
+ const rows=parseCsv(text);if(rows.length<2)throw Error("Receiver CSV has no data rows.");
+ const h=rows[0].map(v=>String(v).trim()),c={
+  seq:col(h,["Sequence","Seq","Packet Sequence"]),lat:col(h,["Latitude","Lat"]),lon:col(h,["Longitude","Lon","Lng"]),
+  rssi:col(h,["RSSI (dBm)","RSSI dBm","RSSI"],"rssi"),snr:col(h,["SNR (dB)","SNR dB","SNR"],"snr"),
+  time:col(h,["RX Time UTC","PC Timestamp","Timestamp","Laptop receive timestamp","Receive Timestamp"],"timestamp"),
+  epoch:col(h,["RX Epoch ms","Receive Epoch ms","Epoch ms"]),speed:col(h,["Speed (km/h)","Speed km/h","Speed"],"speed"),
+  experiment:col(h,["Experiment ID"]),session:col(h,["RX Session ID"]),fieldSession:col(h,["Field Session ID"])
+ };
+ if(c.seq<0)throw Error("Receiver CSV needs a Sequence column for Pi mission matching.");
+ const rec=rows.slice(1).map((r,i)=>({
+  sequence:num(r[c.seq])==null?null:(num(r[c.seq])>>>0),
+  latitude:c.lat>=0?num(r[c.lat]):null,longitude:c.lon>=0?num(r[c.lon]):null,
+  rssi:c.rssi>=0?num(r[c.rssi]):null,snr:c.snr>=0?num(r[c.snr]):null,
+  receiveTime:c.time>=0?String(r[c.time]||""):null,
+  receiveUnixMs:c.epoch>=0?num(r[c.epoch]):null,
+  speed:c.speed>=0?num(r[c.speed]):null,sourceRow:i+2
+ })).filter(r=>r.sequence!=null);
+ if(!rec.length)throw Error("No numeric packet sequence values found.");
+ const first=rows[1]||[];
+ return{
+  records:rec,headers:h,
+  experimentId:c.experiment>=0?String(first[c.experiment]||"").trim():"",
+  rxSessionId:c.session>=0?String(first[c.session]||"").trim():"",
+  fieldSessionId:c.fieldSession>=0?String(first[c.fieldSession]||"").trim():""
+ };
+}
 async function parsePiSidecar(file){
  if(!file)return null;
  const text=await file.text(),lines=text.split(/\r?\n/),samples=[],lastBySequence=new Map();
- let experimentId="",badLines=0;
+ let experimentId="",sessionId="",badLines=0;
  for(let i=0;i<lines.length;i++){
   const line=lines[i].trim();if(!line)continue;
   let event;try{event=JSON.parse(line);}catch(_){badLines++;continue;}
   if(!experimentId&&event.experiment_id)experimentId=String(event.experiment_id);
-  const seq=Number(event.sequence);
+  if(!sessionId&&event.session_id)sessionId=String(event.session_id);
+  const seq=Number(event.sequence),timestampUnix=Number(event.timestamp_unix);
   if(event.event==="sample_recorded"&&Number.isFinite(seq)){
-   const item={sequence:seq,gpsValid:event.gps_valid===true,imuConnected:event.imu_connected===true,imuAgeS:Number.isFinite(Number(event.imu_age_s))?Number(event.imu_age_s):null,txOutcome:"pending",txError:null,eventId:event.event_id};
+   const item={
+    sequence:seq,gpsValid:event.gps_valid===true,imuConnected:event.imu_connected===true,
+    imuAgeS:Number.isFinite(Number(event.imu_age_s))?Number(event.imu_age_s):null,
+    imuError:event.imu_error?String(event.imu_error):null,
+    txOutcome:"pending",txError:null,txResponse:"",
+    sampleTimeUnix:Number.isFinite(timestampUnix)?timestampUnix:null,
+    sampleTimeUtc:event.timestamp_utc?String(event.timestamp_utc):null,
+    eventId:event.event_id
+   };
    samples.push(item);lastBySequence.set(seq,item);
   }else if(event.event==="tx_result"&&Number.isFinite(seq)){
-   const item=lastBySequence.get(seq);if(item){item.txOutcome=String(event.tx_outcome||"unknown");item.txError=event.tx_error?String(event.tx_error):null;item.txResponse=event.radio_response?String(event.radio_response):"";}
+   const item=lastBySequence.get(seq);
+   if(item){
+    item.txOutcome=String(event.tx_outcome||"unknown");item.txError=event.tx_error?String(event.tx_error):null;
+    item.txResponse=event.radio_response?String(event.radio_response):"";
+    item.txResultTimeUnix=Number.isFinite(timestampUnix)?timestampUnix:null;
+    item.txResultTimeUtc=event.timestamp_utc?String(event.timestamp_utc):null;
+   }
   }
  }
  if(!samples.length)throw Error("Pi event sidecar contains no sample_recorded events.");
- return{fileName:file.name,experimentId,samples,badLines};
+ return{fileName:file.name,experimentId,sessionId,samples,badLines};
 }
 function decodeMissionPacket(b){if(b.length!==35||b[0]!==0xaa||b[1]!==2||b[2]!==6)throw Error("Expected RTPv2 RobotState packet");if(crc16(b,33)!==((b[33]<<8)|b[34]))throw Error("mission CRC mismatch");const d=new DataView(b.buffer,b.byteOffset,b.byteLength);return{sequence:d.getUint16(3,false),latitude:d.getInt32(5,false)/1e6,longitude:d.getInt32(9,false)/1e6,speed:d.getUint16(13,false)/100,ax:d.getInt16(15,false)/1000,ay:d.getInt16(17,false)/1000,az:d.getInt16(19,false)/1000,gx:d.getInt16(21,false)/10,gy:d.getInt16(23,false)/10,gz:d.getInt16(25,false)/10,roll:d.getInt16(27,false)/100,pitch:d.getInt16(29,false)/100,yaw:d.getInt16(31,false)/100,received:false,source:"pi-mission"};}
 async function parseRcm(file){const b=new Uint8Array(await file.arrayBuffer());if(b.length<13||b[0]!==0x52||b[1]!==0x43||b[2]!==0x4d||b[3]!==0x31)throw Error("Bad RCM header. Select a Pi transmitter .rcm file.");const d=new DataView(b.buffer,b.byteOffset,b.byteLength),version=b[4],start=d.getFloat64(5,false);if(version!==1)throw Error("Unsupported RCM format version "+version);const count=Math.floor((b.length-13)/35),remainder=(b.length-13)%35,records=[];for(let i=0;i<count;i++){const packet=b.slice(13+i*35,13+(i+1)*35);try{const r=decodeMissionPacket(packet);r.index=i;r.missionStartTime=start;records.push(r);}catch(e){records.push({index:i,sequence:(packet[3]<<8)|packet[4],latitude:null,longitude:null,received:false,invalid:true,error:e.message,source:"pi-mission"});}}if(!records.length)throw Error("No complete mission samples were found.");return{fileName:file.name,formatVersion:version,startTime:start,records,remainder,rawBytes:b.length};}
@@ -333,7 +374,14 @@ function alignMission(m,rx,sidecar){
  if(sidecar){
   m.records.forEach(tx=>{
    const queue=sideBySequence.get(tx.sequence)||[],used=sideUsed.get(tx.sequence)||0,meta=queue[used];
-   if(meta){sideUsed.set(tx.sequence,used+1);tx.sidecarMatched=true;tx.gpsValidFromPi=meta.gpsValid;tx.imuConnected=meta.imuConnected;tx.imuAgeS=meta.imuAgeS;tx.txOutcome=meta.txOutcome;tx.txError=meta.txError;tx.txResponse=meta.txResponse;sidecarMatched++;}
+   if(meta){
+    sideUsed.set(tx.sequence,used+1);tx.sidecarMatched=true;
+    tx.gpsValidFromPi=meta.gpsValid;tx.imuConnected=meta.imuConnected;tx.imuAgeS=meta.imuAgeS;tx.imuError=meta.imuError;
+    tx.txOutcome=meta.txOutcome;tx.txError=meta.txError;tx.txResponse=meta.txResponse;
+    tx.txTimestampUnix=meta.sampleTimeUnix;tx.txTimestampUtc=meta.sampleTimeUtc;
+    tx.txResultTimeUnix=meta.txResultTimeUnix;tx.txResultTimeUtc=meta.txResultTimeUtc;
+    sidecarMatched++;
+   }
   });
  }
  const valid=m.records.filter(r=>!r.invalid);
@@ -352,9 +400,17 @@ function alignMission(m,rx,sidecar){
  m.duplicates=duplicateRx;m.unmatched=unmatched;m.wraps=wraps;m.receiverCount=rx.records.length;
  m.sidecarLoaded=!!sidecar;m.sidecarFile=sidecar?sidecar.fileName:null;m.sidecarMatched=sidecarMatched;
  m.experimentId=sidecar?sidecar.experimentId:"";m.receiverExperimentId=rx.experimentId||"";m.rxSessionId=rx.rxSessionId||"";
+ m.sessionId=sidecar?sidecar.sessionId:"";m.receiverFieldSessionId=rx.fieldSessionId||"";
+ m.sessionVerified=!!(m.sessionId&&m.receiverFieldSessionId&&m.sessionId===m.receiverFieldSessionId);
+ m.sessionMismatch=!!(m.sessionId&&m.receiverFieldSessionId&&m.sessionId!==m.receiverFieldSessionId);
  m.sidecarMismatch=!!(m.experimentId&&m.receiverExperimentId&&m.experimentId!=="UNLABELLED"&&m.receiverExperimentId!=="UNLABELLED"&&m.experimentId!==m.receiverExperimentId);
  m.sidecarBadLines=sidecar?sidecar.badLines:0;
- m.alignmentWarning=wraps>0?"Mission sequence wrapped "+wraps+" time(s); if the receiver CSV starts mid-mission after a wrap, sequence-only matching can be ambiguous. Use the complete matching session.":"";
+ const warnings=[];
+ if(wraps>0)warnings.push("Mission sequence wrapped "+wraps+" time(s); sequence-only matching can be ambiguous if this receiver file starts mid-mission.");
+ if(m.sessionMismatch)warnings.push("Field session ID mismatch: Pi "+m.sessionId+" vs receiver "+m.receiverFieldSessionId+".");
+ if(sidecar&&!m.receiverFieldSessionId)warnings.push("Receiver CSV has no Field Session ID column; pairing cannot be verified.");
+ if(m.sidecarMismatch)warnings.push("Experiment ID mismatch: Pi "+m.experimentId+" vs receiver "+m.receiverExperimentId+".");
+ m.alignmentWarning=warnings.join(" ");
  return m;
 }
 function makeBins(route,step){
