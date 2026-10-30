@@ -3,3 +3,4 @@ pynmea2>=1.19.0
 bleak>=0.22.0
 fastapi>=0.115
 uvicorn>=0.30
+cryptography>=41.0

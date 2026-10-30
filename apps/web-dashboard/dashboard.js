@@ -6,8 +6,9 @@ const S={
  lastPacketAt:0,lastGpsAt:0,lastGps:null,latest:null,latestImu:null,imuSource:null,imuHistory:[],lastLiveMapRecord:null,
  lora:{port:null,reader:null,readDone:null,running:false,connected:false,verified:false,rssi:null,snr:null,info:""},remote:{ws:null,connected:false,authenticated:false,wanted:false,url:"",token:"",lastMessageAt:0,lastTelemetryAt:0,serverStatus:null,reconnectTimer:null,retryMs:2000},protocolOk:null,
  imuDevice:null,imuCharacteristic:null,bleConnected:false,
+ field:{bridgeToken:"",pairing:null,piBeaconStatus:null,piStatus:null,receiverStatus:null,active:false,sessionId:null,experimentId:null,lastError:null},
  recording:false,sessionId:null,sessionRecords:[],storedCount:0,chartMode:"link",follow:false,firstFix:true,
- routeA:null,routeB:null,cloud:[],yaw:-.68,pitch:.56,scale:1,drag:null,toastTimer:null
+ routeA:null,routeB:null,replay:{route:"A",index:0,playing:false,timer:null},cloud:[],yaw:-.68,pitch:.56,scale:1,drag:null,toastTimer:null
 };
 let dbPromise=null;
 
@@ -35,7 +36,7 @@ function validGps(a,b){return Number.isFinite(a)&&Number.isFinite(b)&&a>=-90&&a<
 function rssiColor(n){if(!Number.isFinite(n))return "#91a3b9";if(n>=-85)return "#2ecc71";if(n>=-95)return "#f1c40f";if(n>=-105)return "#e67e22";if(n>=-115)return "#e74c3c";return "#7f0000";}
 function gapInfo(prev,cur){if(prev==null||cur==null)return{delta:1,lost:0,ordered:true,duplicate:false};const d=((cur-prev)%65535+65535)%65535;if(!d)return{delta:0,lost:0,ordered:false,duplicate:true};if(d>32768)return{delta:d,lost:0,ordered:false,duplicate:false};return{delta:d,lost:Math.max(0,d-1),ordered:d===1,duplicate:false};}
 function dist(a,b){if(!a||!b||!validGps(a.latitude,a.longitude)||!validGps(b.latitude,b.longitude))return Infinity;const rad=Math.PI/180,p1=a.latitude*rad,p2=b.latitude*rad,dp=(b.latitude-a.latitude)*rad,dl=(b.longitude-a.longitude)*rad,x=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return 6371000*2*Math.atan2(Math.sqrt(x),Math.sqrt(Math.max(0,1-x)));}
-function initMap(){if(!window.L){$("liveMap").innerHTML='<div class="empty"><div><strong>Map library unavailable</strong>Reload with internet access to load map tiles.</div></div>';return;}S.map=L.map("liveMap",{zoomControl:true,preferCanvas:true}).setView([MANIT.lat,MANIT.lon],MANIT.zoom);L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:20,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'}).addTo(S.map);L.circleMarker([MANIT.lat,MANIT.lon],{radius:7,color:"#80b9ff",fillColor:"#80b9ff",fillOpacity:.35,weight:2}).bindPopup("<b>MANIT Bhopal</b><br><small>Campus reference point · not a live sensor fix.</small>").addTo(S.map);S.liveLayer=L.layerGroup().addTo(S.map);S.compareLayer=L.layerGroup().addTo(S.map);}
+function initMap(){if(!window.L){$("liveMap").innerHTML='<div class="empty"><div><strong>Map library unavailable</strong>Reload with internet access to load map tiles.</div></div>';return;}S.map=L.map("liveMap",{zoomControl:true,preferCanvas:true}).setView([MANIT.lat,MANIT.lon],MANIT.zoom);L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:20,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'}).addTo(S.map);L.circleMarker([MANIT.lat,MANIT.lon],{radius:7,color:"#80b9ff",fillColor:"#80b9ff",fillOpacity:.35,weight:2}).bindPopup("<b>MANIT Bhopal</b><br><small>Campus reference point · not a live sensor fix.</small>").addTo(S.map);S.liveLayer=L.layerGroup().addTo(S.map);S.compareLayer=L.layerGroup().addTo(S.map);S.replayLayer=L.layerGroup().addTo(S.map);}
 function centerManit(){if(S.map)S.map.setView([MANIT.lat,MANIT.lon],MANIT.zoom);}
 function clearLiveMap(){if(S.liveLayer)S.liveLayer.clearLayers();S.liveMapLayers=[];S.lastLiveMapRecord=null;S.firstFix=true;$("mapOverlayLabel").textContent="MANIT Bhopal · live trail cleared";$("mapStatus").textContent="Map cleared; capture data remains unchanged";}
 function mapLivePoint(r){
@@ -91,10 +92,12 @@ function connectRemoteBridge(){
  if(S.lora.connected){toast("Disconnect the direct USB receiver before using the remote laptop feed.",true);return;}
  const raw=$("remoteBridgeUrl").value.trim(),token=$("remoteBridgeToken").value.trim();if(!raw||!token){setRemoteBridgeUi("Enter the tunnel URL and token from the laptop console.","error");return;}
  let url;try{url=new URL(raw);}catch(_){setRemoteBridgeUi("Tunnel URL is not valid.","error");return;}
- if(url.protocol!=="https:"||url.username||url.password||url.search||url.hash||!(url.pathname==="/"||url.pathname==="")){setRemoteBridgeUi("Use the HTTPS origin only, e.g. https://name.trycloudflare.com","error");return;}
+ const localHost=/^(10|127)\./.test(url.hostname)||/^192\.168\./.test(url.hostname)||/^172\.(1[6-9]|2[0-9]|3[01])\./.test(url.hostname)||url.hostname==="localhost"||url.hostname.endsWith(".local");
+ if((url.protocol!=="https:"&&!(url.protocol==="http:"&&localHost))||url.username||url.password||url.search||url.hash||!(url.pathname==="/"||url.pathname==="")){setRemoteBridgeUi("Use an HTTPS tunnel URL or a private-LAN laptop URL.","error");return;}
  if(S.remote.ws)try{S.remote.ws.close(1000,"replacing connection");}catch(_){}
  S.remote.url=url.origin;S.remote.token=token;S.remote.wanted=true;S.remote.connected=false;S.remote.authenticated=false;S.remote.serverStatus=null;if(S.remote.reconnectTimer){clearTimeout(S.remote.reconnectTimer);S.remote.reconnectTimer=null;}
- let ws;try{ws=new WebSocket("wss://"+url.host+"/ws");}catch(e){setRemoteBridgeUi("WebSocket failed: "+e.message,"error");return;}S.remote.ws=ws;setRemoteBridgeUi("Connecting to laptop receiver…");renderStatus();
+ const wsProtocol=url.protocol==="https:"?"wss:":"ws:";
+ let ws;try{ws=new WebSocket(wsProtocol+"//"+url.host+"/ws");}catch(e){setRemoteBridgeUi("WebSocket failed: "+e.message,"error");return;}S.remote.ws=ws;setRemoteBridgeUi("Connecting to laptop receiver…");renderStatus();
  ws.onopen=()=>{S.remote.retryMs=2000;try{ws.send(JSON.stringify({type:"auth",token:S.remote.token}));setRemoteBridgeUi("Authenticating with laptop bridge…");}catch(_){setRemoteBridgeUi("Could not send authentication.","error");}};
  ws.onmessage=event=>{let m;try{m=JSON.parse(event.data);}catch(_){return;}S.remote.lastMessageAt=Date.now();
   if(m.type==="auth_ok"){S.remote.authenticated=true;S.remote.connected=true;setRemoteBridgeUi("Authenticated · waiting for packets…","ok");updateMetrics();renderStatus();return;}
@@ -119,6 +122,232 @@ function connectRemoteBridge(){
  };
 }
 function disconnectRemoteBridge(){S.remote.wanted=false;if(S.remote.reconnectTimer){clearTimeout(S.remote.reconnectTimer);S.remote.reconnectTimer=null;}const ws=S.remote.ws;S.remote.ws=null;S.remote.connected=false;S.remote.authenticated=false;S.remote.token="";if(ws)try{ws.close(1000,"user disconnected");}catch(_){}setRemoteBridgeUi("Disconnected · laptop logging continues locally");updateMetrics();renderStatus();}
+function fieldSetMessage(message,kind){
+ const el=$("fieldSessionMessage");if(el){el.textContent=message;el.className="small-note"+(kind?" "+kind:"");}
+}
+function fieldSetPairBadge(text,kind){
+ const el=$("fieldPairBadge");if(!el)return;el.textContent=text;el.className="pill"+(kind?" "+kind:"");
+}
+async function fieldFetch(base,path,token,options){
+ const headers=Object.assign({},options&&options.headers||{});
+ if(token)headers.Authorization="Bearer "+token;
+ if(options&&options.body)headers["Content-Type"]="application/json";
+ const response=await fetch(base.replace(/\/+$/,"")+path,Object.assign({},options||{},{headers}));
+ const raw=await response.text();let body={};
+ try{body=raw?JSON.parse(raw):{};}catch(_){body={detail:raw};}
+ if(!response.ok){const d=body&&body.detail;throw Error(typeof d==="string"?d:JSON.stringify(d||("HTTP "+response.status)));}
+ return body;
+}
+function fieldUpdateControls(){
+ const f=S.field,rx=f.receiverStatus||{},pi=f.piStatus||{},paired=!!(f.pairing&&f.pairing.tunnel_url&&f.pairing.control_token);
+ const receiverReady=!!(rx.serial_connected&&rx.radio_configured);
+ const piReachable=!!(f.piStatus&&f.pairing);
+ const piRunning=pi.state==="running",rxRecording=!!rx.capture_active;
+ $("fieldStartBtn").disabled=!(paired&&piReachable&&receiverReady&&!piRunning&&!rxRecording);
+ $("fieldStopBtn").disabled=!(piRunning||rxRecording||f.active);
+}
+function fieldRender(){
+ const f=S.field,rx=f.receiverStatus||{},pi=f.piStatus||{},pair=f.pairing;
+ if(!f.bridgeToken){
+  fieldSetPairBadge("Open local laptop dashboard","warn");
+  $("fieldPairTitle").textContent="Automatic pairing is available on the laptop-hosted dashboard";
+  $("fieldPairMessage").textContent="Open http://<laptop-ip>:8765 after starting the laptop field station. The public Vercel page cannot directly discover a private laptop radio link.";
+  $("fieldReceiverStatus").textContent="Laptop receiver: not bootstrapped";
+  $("fieldPiStatus").textContent="Pi: waiting";
+  $("fieldPairMeta").textContent="This panel auto-connects when served by the laptop bridge. It does not store pairing keys in Vercel.";
+  fieldUpdateControls();return;
+ }
+ if(pair){
+  const tunnelState=pi.connection&&pi.connection.tunnel_state||"tunnel announced";
+  const age=pair.last_seen_at?Math.max(0,Math.round(Date.now()/1000-pair.last_seen_at))+" s since beacon":"beacon age unknown";
+  $("fieldPairTitle").textContent="Pi discovered · encrypted LoRa pairing received";
+  $("fieldPairMessage").textContent="Endpoint "+pair.tunnel_url+" · device "+pair.device_id+" · "+age+". The dashboard is now checking Pi sensors and laptop radio readiness.";
+  $("fieldPairMeta").textContent="Tunnel status: "+tunnelState+" · pairing token is held in memory only and never written to the experiment files.";
+  fieldSetPairBadge(pair.capture_active?"Paired · recording":"Paired · ready", "ready");
+ }else{
+  const hb=f.piBeaconStatus;
+  if(hb){
+   $("fieldPairTitle").textContent="Pi is online on LoRa · "+(hb.state||"status received");
+   $("fieldPairMessage").textContent="Pi internet: "+(hb.internet_connected?"available":"not detected yet")+" · tunnel: "+(hb.tunnel_state||"unknown")+". "+(hb.last_error||"The Pi is retrying its connection process and will announce a secure endpoint when ready.");
+   $("fieldPairMeta").textContent="Last Pi status beacon "+(hb.received_at_utc||"recently")+" · LoRa RSSI "+(Number.isFinite(hb.rssi_dbm)?hb.rssi_dbm+" dBm":"unknown")+". Start stays locked until the URL/token pairing beacon arrives.";
+   fieldSetPairBadge(hb.internet_connected?"Tunnel setup pending":"Waiting for internet","warn");
+  }else{
+   $("fieldPairTitle").textContent="Waiting for a Pi LoRa health beacon";
+   $("fieldPairMessage").textContent="The Pi service is expected to check internet periodically and send encrypted health beacons. Once internet is available it starts the temporary HTTPS endpoint and announces the endpoint/token separately.";
+   $("fieldPairMeta").textContent="No recent Pi health beacon is visible. Check laptop LoRa-E5 serial/radio status and the Pi service power/network.";
+   fieldSetPairBadge("No Pi beacon","warn");
+  }
+ }
+ const pairingStatus=rx.pairing||{};
+ const piStatusBeacon=rx.pi_status_beacon||{};
+ $("fieldReceiverStatus").textContent="Laptop RX: "+(rx.serial_connected?(rx.radio_configured?"radio configured":"serial open · radio unverified"):"disconnected")+(rx.capture_active?" · recording":"")+(pairingStatus.received?" · paired with "+(pairingStatus.device_id||"Pi"):(piStatusBeacon.status&& !piStatusBeacon.stale?" · Pi health beacon received":" · waiting for Pi LoRa beacon"));
+ const connection=pi.connection||{};
+ $("fieldPiStatus").textContent=pi.connection
+  ?"Pi internet: "+(connection.internet_connected?"online":"offline")+" · tunnel: "+(connection.tunnel_state||"unknown")+" · "+(pi.state||"unknown")+(pi.stage?" · "+pi.stage:"")
+  :f.piBeaconStatus?"Pi internet: "+(f.piBeaconStatus.internet_connected?"online":"offline")+" · tunnel: "+(f.piBeaconStatus.tunnel_state||"unknown")+" · "+(f.piBeaconStatus.state||"checking")
+  :"Pi: waiting for encrypted LoRa health beacon";
+ if(connection.last_error&&connection.tunnel_state!=="ready")$("fieldPairMessage").textContent="Pi connection detail: "+connection.last_error;
+ if(f.sessionId) $("fieldSessionIdentity").textContent="Session: "+f.sessionId+(f.experimentId?" · "+f.experimentId:"");
+ const files=[];
+ if(pi.mission_files)pi.mission_files.forEach(x=>files.push("Pi: "+x.name));
+ if(rx.log_file)files.push("Laptop: "+rx.log_file.split(/[\\/]/).pop());
+ if(files.length)$("fieldSessionFiles").textContent=files.join(" · ");
+ fieldUpdateControls();
+}
+async function fieldRefresh(){
+ const f=S.field;if(!f.bridgeToken)return;
+ try{
+  const [rx,pair]=await Promise.all([
+   fieldFetch(location.origin,"/api/status",f.bridgeToken),
+   fieldFetch(location.origin,"/api/pairing",f.bridgeToken)
+  ]);
+  f.receiverStatus=rx;
+  f.piBeaconStatus=pair&&pair.pi_status&&!pair.pi_status.stale?pair.pi_status.status:null;
+  if(f.piBeaconStatus){
+   f.piBeaconStatus.received_at_utc=pair.pi_status.last_seen_at?new Date(pair.pi_status.last_seen_at*1000).toISOString():null;
+   f.piBeaconStatus.rssi_dbm=f.piBeaconStatus.rssi_dbm==null?null:f.piBeaconStatus.rssi_dbm;
+  }
+  f.pairing=pair&&pair.paired?pair:null;
+  if(f.pairing){
+   const pi=await fieldFetch(f.pairing.tunnel_url,"/api/status",f.pairing.control_token);
+   f.piStatus=pi;
+   if(pi.state==="running"){f.active=true;f.sessionId=pi.session_id;f.experimentId=pi.experiment_id;}
+   else if(f.active&&pi.state!=="running"){f.active=false;fieldSetMessage("Pi is no longer recording; inspect its log before another run.","error");}
+   if(!S.remote.wanted&&!S.remote.connected&&!S.lora.connected){
+    $("remoteBridgeUrl").value=location.origin;
+    $("remoteBridgeToken").value=f.bridgeToken;
+    connectRemoteBridge();
+   }
+  }else{
+   f.piStatus=null;
+   if(!f.active)f.sessionId=null;
+  }
+  fieldRender();
+ }catch(e){
+  f.lastError=e.message;
+  if(f.pairing)f.piStatus=null;
+  if(!f.pairing){fieldSetPairBadge("Laptop / LoRa link unavailable","error");}
+  fieldSetMessage("Local field bridge or Pi tunnel is unreachable: "+e.message+". The Pi may continue recording locally; reconnect before stopping.","error");
+  fieldUpdateControls();
+ }
+}
+async function fieldDownloadBlob(base,path,token){
+ const headers=token?{Authorization:"Bearer "+token}:{};
+ const response=await fetch(base.replace(/\/+$/,"")+path,{headers,cache:"no-store"});
+ if(!response.ok){
+  let detail="HTTP "+response.status;
+  try{const body=await response.json();detail=typeof body.detail==="string"?body.detail:JSON.stringify(body.detail||body);}catch(_){}
+  throw Error(detail);
+ }
+ return response.blob();
+}
+async function fieldResolvePiSession(pair,sessionId){
+ let current=pair,lastError=null;
+ for(let attempt=0;attempt<18;attempt++){
+  try{
+   const latest=await fieldFetch(location.origin,"/api/pairing",S.field.bridgeToken);
+   if(latest&&latest.paired&&latest.device_id===pair.device_id)current=latest;
+  }catch(_){}
+  try{
+   const index=await fieldFetch(current.tunnel_url,"/api/session/files",current.control_token);
+   if(index.session_id!==sessionId)throw Error("Pi returned a different session ID: "+index.session_id);
+   return{pair:current,index};
+  }catch(error){lastError=error;}
+  if(attempt<17)await delay(2000);
+ }
+ throw Error("Pi session endpoint did not become reachable for artifact sync: "+(lastError?lastError.message:"timeout"));
+}
+async function fieldAutoLoadReplay(pair,sessionId){
+ const rxBase=location.origin,rxToken=S.field.bridgeToken;
+ fieldSetMessage("Both recorders are stopped. Syncing Pi mission, sidecar, manifest and laptop CSV into the replay workspace…","");
+ const [piResolved,rxIndex]=await Promise.all([
+  fieldResolvePiSession(pair,sessionId),
+  fieldFetch(rxBase,"/api/session/files",rxToken)
+ ]);
+ const piPair=piResolved.pair,piIndex=piResolved.index,piBase=piPair.tunnel_url,piToken=piPair.control_token;
+ if(piIndex.session_id!==sessionId||rxIndex.session_id!==sessionId)throw Error("Session ID mismatch while syncing files. Pi="+piIndex.session_id+" · laptop="+rxIndex.session_id+" · expected="+sessionId);
+ const mission=piIndex.files.find(x=>x.kind==="mission"),events=piIndex.files.find(x=>x.kind==="events"),manifest=piIndex.files.find(x=>x.kind==="manifest"),receiver=rxIndex.files.find(x=>x.kind==="receiver");
+ if(!mission||!events||!manifest||!receiver)throw Error("A required session artifact is missing. Pi mission, events, manifest and laptop CSV are all required.");
+ const [mb,eb,fb,rb]=await Promise.all([
+  fieldDownloadBlob(piBase,mission.download,piToken),
+  fieldDownloadBlob(piBase,events.download,piToken),
+  fieldDownloadBlob(piBase,manifest.download,piToken),
+  fieldDownloadBlob(rxBase,receiver.download,rxToken)
+ ]);
+ const files={
+  missionA:new File([mb],mission.name,{type:"application/octet-stream"}),
+  eventsA:new File([eb],events.name,{type:"application/x-ndjson"}),
+  manifestA:new File([fb],manifest.name,{type:"application/json"}),
+  receiverA:new File([rb],receiver.name,{type:"text/csv"})
+ };
+ await compareFiles(files);
+ $("fieldSessionFiles").textContent=[mission.name,events.name,manifest.name,receiver.name].join(" · ");
+ fieldSetMessage("Automatic sync complete · Pi and laptop files share session "+sessionId+". Replay is ready below; export the merged JSON for archival and ML preparation.","good");
+ $("replayPanel").scrollIntoView({behavior:"smooth",block:"start"});
+}
+async function fieldStartPaired(){
+ const f=S.field;
+ if(!f.bridgeToken||!f.pairing)throw Error("No fresh encrypted Pi pairing beacon is available.");
+ const experimentId=$("fieldExperimentId").value.trim();
+ if(!/^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/.test(experimentId))throw Error("Use 3–80 letters, numbers, dots, underscores or dashes for the experiment label.");
+ const pairing=await fieldFetch(location.origin,"/api/pairing",f.bridgeToken);
+ if(!pairing.paired)throw Error("The Pi pairing beacon is stale. Wait for a new beacon before starting.");
+ const [preflight,receiver]=await Promise.all([
+  fieldFetch(pairing.tunnel_url,"/api/preflight",pairing.control_token),
+  fieldFetch(location.origin,"/api/status",f.bridgeToken)
+ ]);
+ if(!preflight.ok)throw Error("Pi preflight failed. Check GPS USB, LoRa-E5 TX and WT901BLE68 in the Pi status/log.");
+ if(!receiver.serial_connected||!receiver.radio_configured)throw Error("Laptop receiver is not ready. Check USB LoRa-E5 and radio configuration.");
+ if(receiver.capture_active)throw Error("A laptop CSV capture is already active. Stop and save it before starting another.");
+ const sessionId="RC-"+new Date().toISOString().replace(/[-:.TZ]/g,"").slice(0,14)+"-"+Math.random().toString(36).slice(2,7).toUpperCase();
+ let receiverStarted=false;
+ try{
+  await fieldFetch(location.origin,"/api/session/start",f.bridgeToken,{method:"POST",body:JSON.stringify({experiment_id:experimentId,session_id:sessionId})});
+  receiverStarted=true;
+  const pi=await fieldFetch(pairing.tunnel_url,"/api/session/start",pairing.control_token,{method:"POST",body:JSON.stringify({experiment_id:experimentId,session_id:sessionId})});
+  f.active=true;f.sessionId=sessionId;f.experimentId=experimentId;f.piStatus=pi;
+  $("fieldSessionIdentity").textContent="Session: "+sessionId+" · "+experimentId;
+  fieldSetMessage("Paired session started. Wait for the Pi log to say recording and for receiver packet counters to move before walking.","good");
+  toast("Started synchronized Pi mission and laptop receiver CSV.");
+ }catch(error){
+  if(receiverStarted){try{await fieldFetch(location.origin,"/api/session/stop",f.bridgeToken,{method:"POST",body:JSON.stringify({session_id:sessionId})});}catch(_){}}
+  throw error;
+ }
+ await fieldRefresh();
+}
+async function fieldStopPaired(){
+ const f=S.field,pair=f.pairing,sessionId=f.sessionId;
+ if(!f.bridgeToken||!pair)throw Error("The paired Pi endpoint is unavailable. Reconnect to the Pi tunnel before stopping.");
+ fieldSetMessage("Stopping the Pi transmitter first. The laptop CSV stays open until Pi stop is confirmed.","");
+ await fieldFetch(pair.tunnel_url,"/api/session/stop",pair.control_token,{method:"POST"});
+ await fieldFetch(location.origin,"/api/session/stop",f.bridgeToken,{method:"POST",body:JSON.stringify({session_id:f.sessionId||""})});
+ f.active=false;
+ fieldSetMessage("Both recorders stopped. Retrieving the four session artifacts…","good");
+ await fieldRefresh();
+ try{
+  await fieldAutoLoadReplay(pair,sessionId||"");
+ }catch(syncError){
+  fieldSetMessage("Both recorders stopped, but automatic file sync/replay did not complete: "+syncError.message+". The four files remain on the Pi/laptop; check session IDs and retry from the file comparison section.","error");
+  toast("Capture stopped; automatic replay sync failed: "+syncError.message,true);
+ }
+}
+function bindFieldSession(){
+ if(!window.ROBOTCORE_FIELD_BOOTSTRAP||!window.ROBOTCORE_FIELD_BOOTSTRAP.bridgeToken)return;
+ S.field.bridgeToken=window.ROBOTCORE_FIELD_BOOTSTRAP.bridgeToken;
+ $("fieldStartBtn").addEventListener("click",async()=>{
+  $("fieldStartBtn").disabled=true;
+  try{await fieldStartPaired();}catch(e){fieldSetMessage("Start failed: "+e.message,"error");toast("Could not start paired session: "+e.message,true);}
+  finally{fieldUpdateControls();}
+ });
+ $("fieldStopBtn").addEventListener("click",async()=>{
+  $("fieldStopBtn").disabled=true;
+  try{await fieldStopPaired();}catch(e){fieldSetMessage("Stop not confirmed: "+e.message+". Do not close the laptop receiver until both files are closed.","error");toast("Could not stop both recorders: "+e.message,true);}
+  finally{fieldUpdateControls();}
+ });
+ fieldSetMessage("Laptop dashboard bootstrap loaded. Waiting for encrypted LoRa pairing and device readiness.","");
+ fieldRefresh();
+ setInterval(fieldRefresh,3000);
+}
 function delay(ms){return new Promise(r=>setTimeout(r,ms));}
 async function serialWrite(port,command){const w=port.writable.getWriter();try{await w.write(new TextEncoder().encode(command+"\r\n"));}finally{w.releaseLock();}}
 async function connectLora(){if(S.remote.wanted||S.remote.connected||S.remote.ws){toast("Disconnect the remote laptop feed before selecting a direct USB receiver.",true);return;}if(!navigator.serial){toast("Web Serial requires a recent Chrome/Edge browser over HTTPS.",true);return;}if(S.lora.connected)return;let port;try{port=await navigator.serial.requestPort();await port.open({baudRate:9600,bufferSize:4096});const inf=port.getInfo?port.getInfo():{},ids=(inf.usbVendorId!=null?" VID 0x"+inf.usbVendorId.toString(16).padStart(4,"0"):"")+(inf.usbProductId!=null?" PID 0x"+inf.usbProductId.toString(16).padStart(4,"0"):"");S.lora.port=port;S.lora.connected=true;S.lora.running=true;S.lora.verified=false;S.lora.info="User-selected USB serial port"+(ids||" · USB IDs unavailable")+" · waiting for LoRa-E5 response";S.lora.readDone=readSerial(port);await serialWrite(port,"AT+MODE=TEST");await delay(350);await serialWrite(port,"AT+TEST=RFCFG,865,SF7,125,12,15,14,ON,OFF,OFF");await delay(500);await serialWrite(port,"AT+TEST=RXLRPKT");$("liveStatePill").textContent="Listening";toast("LoRa-E5 RX configured · 865 MHz / SF7 / BW125K · waiting for valid RTP frames.");renderStatus();}catch(e){if(port)try{await port.close();}catch(_){}S.lora.port=null;S.lora.connected=false;S.lora.running=false;S.lora.verified=false;renderStatus();toast("Could not open selected serial port: "+e.message,true);}}
@@ -145,27 +374,89 @@ function parseCsv(text){const rows=[];let row=[],field="",q=false;text=text.repl
 function norm(v){return String(v||"").trim().toLowerCase().replace(/[^a-z0-9]+/g,"");}
 function col(h,choices,includes){const a=h.map(norm);for(const c of choices){const i=a.indexOf(norm(c));if(i>=0)return i;}return includes?a.findIndex(v=>v.includes(includes)):-1;}
 function num(v){if(v==null||String(v).trim()==="")return null;const n=Number(String(v).replace(/,/g,"").trim());return Number.isFinite(n)?n:null;}
-function parseRxCsv(text){const rows=parseCsv(text);if(rows.length<2)throw Error("Receiver CSV has no data rows.");const h=rows[0].map(v=>String(v).trim()),c={seq:col(h,["Sequence","Seq","Packet Sequence"]),lat:col(h,["Latitude","Lat"]),lon:col(h,["Longitude","Lon","Lng"]),rssi:col(h,["RSSI (dBm)","RSSI dBm","RSSI"],"rssi"),snr:col(h,["SNR (dB)","SNR dB","SNR"],"snr"),time:col(h,["RX Time UTC","PC Timestamp","Timestamp","Laptop receive timestamp","Receive Timestamp"],"timestamp"),speed:col(h,["Speed (km/h)","Speed km/h","Speed"],"speed"),experiment:col(h,["Experiment ID"]),session:col(h,["RX Session ID"])};if(c.seq<0)throw Error("Receiver CSV needs a Sequence column for Pi mission matching.");const rec=rows.slice(1).map((r,i)=>({sequence:num(r[c.seq])==null?null:(num(r[c.seq])>>>0),latitude:c.lat>=0?num(r[c.lat]):null,longitude:c.lon>=0?num(r[c.lon]):null,rssi:c.rssi>=0?num(r[c.rssi]):null,snr:c.snr>=0?num(r[c.snr]):null,receiveTime:c.time>=0?String(r[c.time]||""):null,speed:c.speed>=0?num(r[c.speed]):null,sourceRow:i+2})).filter(r=>r.sequence!=null);if(!rec.length)throw Error("No numeric packet sequence values found.");return{records:rec,headers:h,experimentId:c.experiment>=0?String(rows[1][c.experiment]||"").trim():"",rxSessionId:c.session>=0?String(rows[1][c.session]||"").trim():""};}
+function finiteOrNull(v){if(v==null||String(v).trim()==="")return null;const n=Number(v);return Number.isFinite(n)?n:null;}
+function parseRxCsv(text){
+ const rows=parseCsv(text);if(rows.length<2)throw Error("Receiver CSV has no data rows.");
+ const h=rows[0].map(v=>String(v).trim()),c={
+  seq:col(h,["Sequence","Seq","Packet Sequence"]),lat:col(h,["Latitude","Lat"]),lon:col(h,["Longitude","Lon","Lng"]),
+  rssi:col(h,["RSSI (dBm)","RSSI dBm","RSSI"],"rssi"),snr:col(h,["SNR (dB)","SNR dB","SNR"],"snr"),
+  time:col(h,["RX Time UTC","PC Timestamp","Timestamp","Laptop receive timestamp","Receive Timestamp"],"timestamp"),
+  epoch:col(h,["RX Epoch ms","Receive Epoch ms","Epoch ms"]),lostBefore:col(h,["Lost Before"]),speed:col(h,["Speed (km/h)","Speed km/h","Speed"],"speed"),
+  experiment:col(h,["Experiment ID"]),session:col(h,["RX Session ID"]),fieldSession:col(h,["Field Session ID"])
+ };
+ if(c.seq<0)throw Error("Receiver CSV needs a Sequence column for Pi mission matching.");
+ const rec=rows.slice(1).map((r,i)=>({
+  sequence:num(r[c.seq])==null?null:(num(r[c.seq])>>>0),
+  latitude:c.lat>=0?num(r[c.lat]):null,longitude:c.lon>=0?num(r[c.lon]):null,
+  rssi:c.rssi>=0?num(r[c.rssi]):null,snr:c.snr>=0?num(r[c.snr]):null,
+  receiveTime:c.time>=0?String(r[c.time]||""):null,
+  receiveUnixMs:c.epoch>=0?num(r[c.epoch]):null,
+  lostBefore:c.lostBefore>=0?num(r[c.lostBefore]):null,
+  speed:c.speed>=0?num(r[c.speed]):null,sourceRow:i+2
+ })).filter(r=>r.sequence!=null);
+ if(!rec.length)throw Error("No numeric packet sequence values found.");
+ const first=rows[1]||[];
+ return{
+  records:rec,headers:h,
+  experimentId:c.experiment>=0?String(first[c.experiment]||"").trim():"",
+  rxSessionId:c.session>=0?String(first[c.session]||"").trim():"",
+  fieldSessionId:c.fieldSession>=0?String(first[c.fieldSession]||"").trim():""
+ };
+}
 async function parsePiSidecar(file){
  if(!file)return null;
- const text=await file.text(),lines=text.split(/\r?\n/),samples=[],lastBySequence=new Map();
- let experimentId="",badLines=0;
+ const text=await file.text(),lines=text.split(/\r?\n/),samples=[],skippedSamples=[],lastBySequence=new Map();
+ let experimentId="",sessionId="",radioConfig=null,badLines=0;
  for(let i=0;i<lines.length;i++){
   const line=lines[i].trim();if(!line)continue;
   let event;try{event=JSON.parse(line);}catch(_){badLines++;continue;}
   if(!experimentId&&event.experiment_id)experimentId=String(event.experiment_id);
-  const seq=Number(event.sequence);
+  if(!sessionId&&event.session_id)sessionId=String(event.session_id);
+  if(event.event==="mission_started"&&event.radio_config)radioConfig=event.radio_config;
+  const seq=Number(event.sequence),timestampUnix=Number(event.timestamp_unix);
   if(event.event==="sample_recorded"&&Number.isFinite(seq)){
-   const item={sequence:seq,gpsValid:event.gps_valid===true,imuConnected:event.imu_connected===true,imuAgeS:Number.isFinite(Number(event.imu_age_s))?Number(event.imu_age_s):null,txOutcome:"pending",txError:null,eventId:event.event_id};
+   const item={
+    sequence:seq,gpsValid:event.gps_valid===true,imuConnected:event.imu_connected===true,
+    imuAgeS:finiteOrNull(event.imu_age_s),
+    imuError:event.imu_error?String(event.imu_error):null,
+    txOutcome:"pending",txError:null,txResponse:"",
+    sampleTimeUnix:finiteOrNull(event.timestamp_unix),
+    sampleTimeUtc:event.timestamp_utc?String(event.timestamp_utc):null,
+    eventId:event.event_id
+   };
    samples.push(item);lastBySequence.set(seq,item);
+  }else if(event.event==="sample_skipped"){
+   skippedSamples.push({
+    reason:String(event.reason||"unknown"),
+    timestampUnix:Number.isFinite(timestampUnix)?timestampUnix:null,
+    timestampUtc:event.timestamp_utc?String(event.timestamp_utc):null,
+    gpsValid:event.gps_valid===true,
+    imuConnected:!!event.imu_connected,
+    imuAgeS:finiteOrNull(event.imu_age_s),
+    gpsError:event.gps_error?String(event.gps_error):null,
+    txOutcome:String(event.tx_outcome||"not_attempted")
+   });
   }else if(event.event==="tx_result"&&Number.isFinite(seq)){
-   const item=lastBySequence.get(seq);if(item){item.txOutcome=String(event.tx_outcome||"unknown");item.txError=event.tx_error?String(event.tx_error):null;item.txResponse=event.radio_response?String(event.radio_response):"";}
+   const item=lastBySequence.get(seq);
+   if(item){
+    item.txOutcome=String(event.tx_outcome||"unknown");item.txError=event.tx_error?String(event.tx_error):null;
+    item.txResponse=event.radio_response?String(event.radio_response):"";
+    item.txResultTimeUnix=Number.isFinite(timestampUnix)?timestampUnix:null;
+    item.txResultTimeUtc=event.timestamp_utc?String(event.timestamp_utc):null;
+   }
   }
  }
  if(!samples.length)throw Error("Pi event sidecar contains no sample_recorded events.");
- return{fileName:file.name,experimentId,samples,badLines};
+ return{fileName:file.name,experimentId,sessionId,radioConfig,samples,skippedSamples,badLines};
 }
 function decodeMissionPacket(b){if(b.length!==35||b[0]!==0xaa||b[1]!==2||b[2]!==6)throw Error("Expected RTPv2 RobotState packet");if(crc16(b,33)!==((b[33]<<8)|b[34]))throw Error("mission CRC mismatch");const d=new DataView(b.buffer,b.byteOffset,b.byteLength);return{sequence:d.getUint16(3,false),latitude:d.getInt32(5,false)/1e6,longitude:d.getInt32(9,false)/1e6,speed:d.getUint16(13,false)/100,ax:d.getInt16(15,false)/1000,ay:d.getInt16(17,false)/1000,az:d.getInt16(19,false)/1000,gx:d.getInt16(21,false)/10,gy:d.getInt16(23,false)/10,gz:d.getInt16(25,false)/10,roll:d.getInt16(27,false)/100,pitch:d.getInt16(29,false)/100,yaw:d.getInt16(31,false)/100,received:false,source:"pi-mission"};}
+async function parsePiManifest(file){
+ if(!file)return null;
+ let value;
+ try{value=JSON.parse(await file.text());}catch(error){throw Error("Pi manifest is not valid JSON: "+error.message);}
+ if(!value||typeof value!=="object"||value.schema_version!=="1.0.0"||!value.session_id)throw Error("Pi manifest schema or session ID is unsupported.");
+ return value;
+}
 async function parseRcm(file){const b=new Uint8Array(await file.arrayBuffer());if(b.length<13||b[0]!==0x52||b[1]!==0x43||b[2]!==0x4d||b[3]!==0x31)throw Error("Bad RCM header. Select a Pi transmitter .rcm file.");const d=new DataView(b.buffer,b.byteOffset,b.byteLength),version=b[4],start=d.getFloat64(5,false);if(version!==1)throw Error("Unsupported RCM format version "+version);const count=Math.floor((b.length-13)/35),remainder=(b.length-13)%35,records=[];for(let i=0;i<count;i++){const packet=b.slice(13+i*35,13+(i+1)*35);try{const r=decodeMissionPacket(packet);r.index=i;r.missionStartTime=start;records.push(r);}catch(e){records.push({index:i,sequence:(packet[3]<<8)|packet[4],latitude:null,longitude:null,received:false,invalid:true,error:e.message,source:"pi-mission"});}}if(!records.length)throw Error("No complete mission samples were found.");return{fileName:file.name,formatVersion:version,startTime:start,records,remainder,rawBytes:b.length};}
 function mean(v){v=v.filter(Number.isFinite);return v.length?v.reduce((a,b)=>a+b,0)/v.length:null;}
 function alignMission(m,rx,sidecar){
@@ -179,12 +470,22 @@ function alignMission(m,rx,sidecar){
   if(priorRx!=null){const g=gapInfo(priorRx,rec.sequence);if(g.duplicate){duplicateRx++;return;}}
   const candidates=indices.get(rec.sequence)||[],idx=candidates.find(i=>i>cursor);
   if(idx==null){unmatched++;priorRx=rec.sequence;return;}
-  const tx=m.records[idx];tx.received=true;tx.rssi=rec.rssi;tx.snr=rec.snr;tx.receiveTime=rec.receiveTime;matched++;cursor=idx;priorRx=rec.sequence;
+  const tx=m.records[idx];
+  tx.received=true;tx.rssi=rec.rssi;tx.snr=rec.snr;
+  tx.receiveTime=rec.receiveTime;tx.receiveUnixMs=rec.receiveUnixMs;tx.lostBefore=rec.lostBefore;
+  matched++;cursor=idx;priorRx=rec.sequence;
  });
  if(sidecar){
   m.records.forEach(tx=>{
    const queue=sideBySequence.get(tx.sequence)||[],used=sideUsed.get(tx.sequence)||0,meta=queue[used];
-   if(meta){sideUsed.set(tx.sequence,used+1);tx.sidecarMatched=true;tx.gpsValidFromPi=meta.gpsValid;tx.imuConnected=meta.imuConnected;tx.imuAgeS=meta.imuAgeS;tx.txOutcome=meta.txOutcome;tx.txError=meta.txError;tx.txResponse=meta.txResponse;sidecarMatched++;}
+   if(meta){
+    sideUsed.set(tx.sequence,used+1);tx.sidecarMatched=true;
+    tx.gpsValidFromPi=meta.gpsValid;tx.imuConnected=meta.imuConnected;tx.imuAgeS=meta.imuAgeS;tx.imuError=meta.imuError;
+    tx.txOutcome=meta.txOutcome;tx.txError=meta.txError;tx.txResponse=meta.txResponse;
+    tx.txTimestampUnix=meta.sampleTimeUnix;tx.txTimestampUtc=meta.sampleTimeUtc;
+    tx.txResultTimeUnix=meta.txResultTimeUnix;tx.txResultTimeUtc=meta.txResultTimeUtc;
+    sidecarMatched++;
+   }
   });
  }
  const valid=m.records.filter(r=>!r.invalid);
@@ -203,9 +504,17 @@ function alignMission(m,rx,sidecar){
  m.duplicates=duplicateRx;m.unmatched=unmatched;m.wraps=wraps;m.receiverCount=rx.records.length;
  m.sidecarLoaded=!!sidecar;m.sidecarFile=sidecar?sidecar.fileName:null;m.sidecarMatched=sidecarMatched;
  m.experimentId=sidecar?sidecar.experimentId:"";m.receiverExperimentId=rx.experimentId||"";m.rxSessionId=rx.rxSessionId||"";
+ m.sessionId=sidecar?sidecar.sessionId:"";m.receiverFieldSessionId=rx.fieldSessionId||"";m.radioConfig=sidecar?sidecar.radioConfig:null;m.sidecarSkippedSamples=sidecar?sidecar.skippedSamples:[];m.receiverFileName=rx.fileName||"";
+ m.sessionVerified=!!(m.sessionId&&m.receiverFieldSessionId&&m.sessionId===m.receiverFieldSessionId);
+ m.sessionMismatch=!!(m.sessionId&&m.receiverFieldSessionId&&m.sessionId!==m.receiverFieldSessionId);
  m.sidecarMismatch=!!(m.experimentId&&m.receiverExperimentId&&m.experimentId!=="UNLABELLED"&&m.receiverExperimentId!=="UNLABELLED"&&m.experimentId!==m.receiverExperimentId);
  m.sidecarBadLines=sidecar?sidecar.badLines:0;
- m.alignmentWarning=wraps>0?"Mission sequence wrapped "+wraps+" time(s); if the receiver CSV starts mid-mission after a wrap, sequence-only matching can be ambiguous. Use the complete matching session.":"";
+ const warnings=[];
+ if(wraps>0)warnings.push("Mission sequence wrapped "+wraps+" time(s); sequence-only matching can be ambiguous if this receiver file starts mid-mission.");
+ if(m.sessionMismatch)warnings.push("Field session ID mismatch: Pi "+m.sessionId+" vs receiver "+m.receiverFieldSessionId+".");
+ if(sidecar&&!m.receiverFieldSessionId)warnings.push("Receiver CSV has no Field Session ID column; pairing cannot be verified.");
+ if(m.sidecarMismatch)warnings.push("Experiment ID mismatch: Pi "+m.experimentId+" vs receiver "+m.receiverExperimentId+".");
+ m.alignmentWarning=warnings.join(" ");
  return m;
 }
 function makeBins(route,step){
@@ -260,21 +569,34 @@ function verdict(){
 }
 function cloudData(){let rs=[];if(S.routeA)rs=rs.concat(S.routeA.records.map(r=>Object.assign({},r,{route:"A"})));if(S.routeB)rs=rs.concat(S.routeB.records.map(r=>Object.assign({},r,{route:"B"})));if(!rs.length)rs=S.liveRecords.filter(r=>validGps(r.latitude,r.longitude)).slice(-1800);rs=rs.filter(r=>validGps(r.latitude,r.longitude));if(rs.length>3000){const stride=rs.length/3000;rs=Array.from({length:3000},(_,i)=>rs[Math.floor(i*stride)]);}S.cloud=rs;$("cloudCount").textContent=rs.length.toLocaleString()+" points";$("cloudLabel").textContent=rs.length?(S.routeA?"PI SAMPLES · RECEIVED / LOST":"LIVE GPS · 3D"):"NO POINT CLOUD · awaiting GPS";$("cloudCaption").textContent=S.routeA?"Z = sample progression, not altitude. Lost samples use the Pi mission GPS; X/Y are local east/north metres from the first valid point.":"RTPv2 has no altitude field. Until an altitude-enabled source exists, Z represents sample progression—not terrain elevation. Drag to orbit and scroll to zoom.";}
 function drawCloud(){const c=$("cloudCanvas"),dpr=Math.max(1,window.devicePixelRatio||1),rect=c.getBoundingClientRect(),w=Math.max(260,rect.width),h=Math.max(210,rect.height);c.width=Math.round(w*dpr);c.height=Math.round(h*dpr);const x=c.getContext("2d");x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,w,h);const bg=x.createRadialGradient(w*.5,h*.44,5,w*.5,h*.44,Math.max(w,h)*.7);bg.addColorStop(0,"#112633");bg.addColorStop(1,"#09111a");x.fillStyle=bg;x.fillRect(0,0,w,h);const horizon=h*.57;x.strokeStyle="#1e3346";x.lineWidth=1;for(let i=-5;i<=5;i++){x.beginPath();x.moveTo(w/2+i*23,horizon-90);x.lineTo(w/2+i*52,h-17);x.stroke();}for(let j=0;j<6;j++){const y=horizon+j*j*8;x.beginPath();x.moveTo(10,y);x.lineTo(w-10,y);x.stroke();}if(!S.cloud.length){x.fillStyle="#91a3b9";x.textAlign="center";x.font="12px system-ui";x.fillText("Waiting for real coordinates",w/2,h/2-4);x.font="10px system-ui";x.fillText("Connect the LoRa receiver or load Pi / receiver files below",w/2,h/2+17);return;}const a=S.cloud,lat0=a[0].latitude,lon0=a[0].longitude,rad=Math.PI/180,pts=a.map((r,i)=>({x:(r.longitude-lon0)*111320*Math.cos(lat0*rad),y:(r.latitude-lat0)*110540,z:0,r,i})),mx=Math.max(1,...pts.map(p=>Math.abs(p.x))),my=Math.max(1,...pts.map(p=>Math.abs(p.y))),extent=Math.max(mx,my);pts.forEach(p=>{p.z=a.length>1?(p.i/(a.length-1)-.5)*extent*.75:0;});const basis=Math.min(w*.36/mx,h*.32/my)*S.scale,cy=Math.cos(S.yaw),sy=Math.sin(S.yaw),cp=Math.cos(S.pitch),sp=Math.sin(S.pitch),proj=pts.map(p=>{const xx=p.x*cy-p.y*sy,yy=p.x*sy+p.y*cy,zz=p.z*cp-yy*sp,depth=p.z*sp+yy*cp,per=520/(520+depth);return{x:w/2+xx*basis*per,y:h*.53-zz*basis*per,depth,p,per};}).sort((a,b)=>b.depth-a.depth);const ordered=proj.slice().sort((a,b)=>a.p.i-b.p.i);x.strokeStyle="#42738b";x.lineWidth=1.1;x.beginPath();let drew=false;ordered.forEach((p,i)=>{if(!i){x.moveTo(p.x,p.y);drew=true;return;}const a=ordered[i-1],r=p.p.r,pr=a.p.r,hasMission=!!(S.routeA||S.routeB),ok=hasMission?(r.received&&pr.received&&r.route===pr.route&&r.index===pr.index+1):(r.source===pr.source&&(r.source==="lora-rx"||r.source==="remote-receiver")&&r.sourceIndex===pr.sourceIndex+1&&r.sequence!=null&&pr.sequence!=null&&gapInfo(pr.sequence,r.sequence).delta===1);if(!ok){x.moveTo(p.x,p.y);drew=false;return;}x.lineTo(p.x,p.y);drew=true;});x.stroke();const mode=$("cloudColorMode").value;proj.forEach(q=>{const r=q.p.r;let color;if(mode==="route")color=r.route==="B"?"#80b9ff":"#65e0d4";else if(mode==="sequence")color="hsl("+Math.round(185+150*q.p.i/Math.max(1,pts.length-1))+",78%,66%)";else color=r.received===false?"#ff8e9b":rssiColor(r.rssi);x.beginPath();x.arc(q.x,q.y,Math.max(1.5,Math.min(4.8,2.8*q.per)),0,Math.PI*2);x.fillStyle=color;x.shadowColor=color;x.shadowBlur=6*q.per;x.fill();x.shadowBlur=0;});x.textAlign="left";x.font="10px system-ui";x.fillStyle="#95b3c8";x.fillText("NORTH / Y",12,h-32);x.fillStyle="#65e0d4";x.fillText("EAST / X",12,h-17);}
-async function compareFiles(){
- const ma=$("missionA").files[0],ra=$("receiverA").files[0],ea=$("eventsA").files[0],
-       mb=$("missionB").files[0],rb=$("receiverB").files[0],eb=$("eventsB").files[0];
+async function compareFiles(fileOverride=null){
+ const pick=(key,id)=>fileOverride&&Object.prototype.hasOwnProperty.call(fileOverride,key)?fileOverride[key]:$(id).files[0];
+ const ma=pick("missionA","missionA"),ra=pick("receiverA","receiverA"),ea=pick("eventsA","eventsA"),
+       mb=pick("missionB","missionB"),rb=pick("receiverB","receiverB"),eb=pick("eventsB","eventsB");
+ const manifestA=fileOverride&&fileOverride.manifestA||null,manifestB=fileOverride&&fileOverride.manifestB||null;
  if(!ma||!ra){toast("Route A requires the Pi .rcm mission and the matching receiver CSV.",true);return;}
  if((mb&&!rb)||(!mb&&rb)){toast("Route B needs both its Pi mission and receiver CSV.",true);return;}
  if(eb&&(!mb||!rb)){toast("Route B sidecar requires a matching Route B mission and receiver CSV.",true);return;}
  $("compareBtn").disabled=true;$("compareStatus").textContent="Reading RCM, receiver CSV and optional event sidecars locally...";
  try{
-  const [am,ar,ae]=await Promise.all([parseRcm(ma),ra.text().then(parseRxCsv),parsePiSidecar(ea)]);
-  S.routeA=makeBins(alignMission(am,ar,ae),Number($("segmentLength").value));S.routeB=null;
-  if(mb&&rb){const [bm,br,be]=await Promise.all([parseRcm(mb),rb.text().then(parseRxCsv),parsePiSidecar(eb)]);S.routeB=makeBins(alignMission(bm,br,be),Number($("segmentLength").value));}
+  const [am,ar,ae,amanifest]=await Promise.all([parseRcm(ma),ra.text().then(parseRxCsv),parsePiSidecar(ea),parsePiManifest(manifestA)]);
+  am.fileName=ma.name;ar.fileName=ra.name;
+  if(amanifest&&ae&&amanifest.session_id!==ae.sessionId)throw Error("Pi manifest and event sidecar session IDs do not match.");
+  const alignedA=makeBins(alignMission(am,ar,ae),Number($("segmentLength").value));
+  alignedA.manifest=amanifest;alignedA.manifestFile=manifestA?manifestA.name:null;
+  S.routeA=alignedA;S.routeB=null;
+  if(mb&&rb){
+   const [bm,br,be,bmanifest]=await Promise.all([parseRcm(mb),rb.text().then(parseRxCsv),parsePiSidecar(eb),parsePiManifest(manifestB)]);
+   bm.fileName=mb.name;br.fileName=rb.name;
+   if(bmanifest&&be&&bmanifest.session_id!==be.sessionId)throw Error("Route B manifest and event sidecar session IDs do not match.");
+   const alignedB=makeBins(alignMission(bm,br,be),Number($("segmentLength").value));
+   alignedB.manifest=bmanifest;alignedB.manifestFile=manifestB?manifestB.name:null;
+   S.routeB=alignedB;
+  }
   if(S.compareLayer)S.compareLayer.clearLayers();drawCompared(S.routeA,0);if(S.routeB)drawCompared(S.routeB,1);
   const bounds=[];[S.routeA,S.routeB].filter(Boolean).forEach(m=>m.records.forEach(r=>{if(validGps(r.latitude,r.longitude))bounds.push([r.latitude,r.longitude]);}));
   if(S.map&&bounds.length){S.map.fitBounds(bounds,{padding:[28,28],maxZoom:18});$("mapModeTag").textContent="Pi / RX comparison";}
-  updateRouteStatus();showSummary(S.routeA,"A");showSummary(S.routeB,"B");renderBins();verdict();cloudData();drawCloud();$("exportLossBtn").disabled=false;
+  updateRouteStatus();showSummary(S.routeA,"A");showSummary(S.routeB,"B");renderBins();verdict();cloudData();drawCloud();$("exportLossBtn").disabled=false;setupReplay("A");
   $("compareStatus").textContent="Sequence alignment complete · "+S.routeA.records.length+" Route A samples"+(S.routeB?" · "+S.routeB.records.length+" Route B samples":"")+".";
   toast("Packet-loss map complete. The optional sidecar now adds Pi-side TX evidence to missing samples.");
  }catch(e){toast("Comparison failed: "+e.message,true);$("compareStatus").textContent="Check the RCM, receiver CSV and JSONL sidecar formats.";}
@@ -293,7 +615,205 @@ function exportLoss(){
  const h=Object.keys(rows[0]);download(new Blob([h.join(",")+"\r\n"+rows.map(r=>h.map(k=>csvCell(r[k])).join(",")).join("\r\n")],{type:"text/csv;charset=utf-8"}),"robotcore_loss_map_"+new Date().toISOString().replace(/[:.]/g,"-")+".csv");
  toast("Exported "+rows.length+" Pi samples with received/lost labels and transmitter-side outcome evidence where available.");
 }
-function clearComparison(){S.routeA=null;S.routeB=null;if(S.compareLayer)S.compareLayer.clearLayers();["missionA","receiverA","eventsA","missionB","receiverB","eventsB"].forEach(id=>$(id).value="");["pdrA","lostA","pdrB","lostB"].forEach(id=>$(id).textContent="—");$("exportLossBtn").disabled=true;$("compareStatus").textContent="Files are parsed locally in this browser."; $("segmentRows").innerHTML='<tr><td colspan="6" class="muted">No comparison computed yet.</td></tr>';$("mapModeTag").textContent="MANIT / live";updateRouteStatus();verdict();cloudData();drawCloud();centerManit();}
+function replayRoute(){
+ return $("replayRoute").value==="B"?S.routeB:S.routeA;
+}
+function replayStop(){
+ if(S.replay.timer){clearTimeout(S.replay.timer);S.replay.timer=null;}
+ S.replay.playing=false;
+ const b=$("replayPlayBtn");if(b)b.textContent="▶ Play";
+}
+function replaySetAvailability(enabled){
+ ["replayPlayBtn","replayPrevBtn","replayNextBtn","replaySeek","exportMergedBtn"].forEach(id=>$(id).disabled=!enabled);
+}
+function replayTimeLabel(r){
+ if(Number.isFinite(r.txTimestampUnix))return new Date(r.txTimestampUnix*1000).toISOString();
+ return "Sample-index timeline · no per-sample TX timestamp in RCM";
+}
+function replayRender(){
+ const route=replayRoute(),records=route&&route.records||[];
+ if(!records.length){
+  $("replayProgress").textContent="0 / 0";$("replaySequence").textContent="—";
+  $("replayTimestamp").textContent="Timestamp unavailable";$("replayOutcome").textContent="—";
+  $("replayLossClass").textContent="No merged sample";$("replayRssi").textContent="—";
+  $("replaySnr").textContent="SNR —";$("replayCoords").textContent="—";
+  $("replayDistance").textContent="Distance —";$("replayImuHealth").textContent="—";
+  $("replayImuAge").textContent="Sensor sample age —";$("replayAttitude").textContent="—";
+  $("replayMotion").textContent="Accel / gyro —";
+  if(S.replayLayer)S.replayLayer.clearLayers();
+  return;
+ }
+ S.replay.index=Math.max(0,Math.min(records.length-1,S.replay.index));
+ const r=records[S.replay.index],received=!!r.received;
+ $("replaySeek").max=String(Math.max(0,records.length-1));
+ $("replaySeek").value=String(S.replay.index);
+ $("replayProgress").textContent=(S.replay.index+1)+" / "+records.length;
+ $("replaySequence").textContent=Number.isFinite(r.sequence)?String(r.sequence):"Invalid";
+ $("replayTimestamp").textContent=replayTimeLabel(r);
+ $("replayOutcome").textContent=r.invalid?"INVALID":received?"RECEIVED":"NOT RECEIVED";
+ $("replayLossClass").textContent=(r.lossClass||"unattributed")+" · TX "+(r.txOutcome||"unknown");
+ $("replayRssi").textContent=received&&Number.isFinite(r.rssi)?r.rssi+" dBm":"— dBm";
+ $("replaySnr").textContent=received&&Number.isFinite(r.snr)?"SNR "+r.snr+" dB":"SNR —";
+ $("replayCoords").textContent=validGps(r.latitude,r.longitude)?r.latitude.toFixed(6)+", "+r.longitude.toFixed(6):"No valid GPS";
+ $("replayDistance").textContent=Number.isFinite(r.distanceM)?"Distance "+r.distanceM.toFixed(1)+" m":"Distance unavailable";
+ $("replayImuHealth").textContent=r.sidecarMatched?(r.imuConnected?"Connected at TX sample":"Disconnected at TX sample"):"Unverified";
+ $("replayImuAge").textContent=Number.isFinite(r.imuAgeS)?"Sensor sample age "+r.imuAgeS.toFixed(3)+" s":(r.sidecarMatched?"Sensor age unavailable":"No Pi event sidecar");
+ $("replayAttitude").textContent=[r.roll,r.pitch,r.yaw].every(Number.isFinite)?r.roll.toFixed(1)+"° / "+r.pitch.toFixed(1)+"° / "+r.yaw.toFixed(1)+"°":"—";
+ $("replayMotion").textContent=[r.ax,r.ay,r.az].every(Number.isFinite)?"Accel "+r.ax.toFixed(2)+", "+r.ay.toFixed(2)+", "+r.az.toFixed(2)+" g":"Accel / gyro unavailable";
+ $("replayTag").textContent=route.sessionVerified?"Session ID verified":route.sessionMismatch?"Session ID mismatch":"Session ID unverified";
+ if(S.replayLayer){
+  S.replayLayer.clearLayers();
+  if(S.map&&validGps(r.latitude,r.longitude)){
+   const color=r.invalid?"#f8bd70":received?"#65e0d4":"#ff8e9b";
+   L.circleMarker([r.latitude,r.longitude],{radius:11,color:"#ffffff",fillColor:color,fillOpacity:1,weight:3})
+    .bindPopup("<b>Replay sample "+(S.replay.index+1)+"</b><br>Sequence "+esc(r.sequence)+"<br>"+(received?"Received":"Not received")+"<br>"+esc(r.lossClass||"unknown")).addTo(S.replayLayer);
+  }
+ }
+}
+function replayStep(delta){
+ replayStop();
+ const route=replayRoute();if(!route||!route.records.length)return;
+ S.replay.index=Math.max(0,Math.min(route.records.length-1,S.replay.index+delta));
+ replayRender();
+}
+function replayDelay(route,from,to){
+ const speed=Math.max(.25,Number($("replaySpeed").value)||1);
+ const a=route.records[from],b=route.records[to];
+ if(Number.isFinite(a.txTimestampUnix)&&Number.isFinite(b.txTimestampUnix)){
+  const delta=(b.txTimestampUnix-a.txTimestampUnix)*1000;
+  if(delta>0)return Math.max(80,Math.min(12000,delta/speed));
+ }
+ return 1000/speed;
+}
+function replaySchedule(){
+ const route=replayRoute();
+ if(!S.replay.playing||!route)return;
+ if(S.replay.index>=route.records.length-1){replayStop();return;}
+ const next=S.replay.index+1,delayMs=replayDelay(route,S.replay.index,next);
+ S.replay.timer=setTimeout(()=>{
+  S.replay.timer=null;
+  if(!S.replay.playing)return;
+  S.replay.index=next;replayRender();replaySchedule();
+ },delayMs);
+}
+function replayToggle(){
+ const route=replayRoute();if(!route||!route.records.length)return;
+ if(S.replay.playing){replayStop();return;}
+ if(S.replay.index>=route.records.length-1)S.replay.index=0;
+ S.replay.playing=true;$("replayPlayBtn").textContent="Ⅱ Pause";
+ replayRender();replaySchedule();
+}
+function setupReplay(which){
+ replayStop();
+ const select=$("replayRoute");
+ const hasB=!!(S.routeB&&S.routeB.records&&S.routeB.records.length);
+ select.querySelector('option[value="B"]').disabled=!hasB;
+ if(which==="B"&&hasB)select.value="B";else if(!hasB)select.value="A";
+ S.replay.route=select.value;S.replay.index=0;
+ const route=replayRoute(),enabled=!!(route&&route.records&&route.records.length);
+ replaySetAvailability(enabled);
+ $("replayTag").textContent=route?(route.sessionVerified?"Session ID verified":route.sessionMismatch?"Session ID mismatch":"Session ID unverified"):"No merged session";
+ $("replayStatus").textContent=route?(route.sessionVerified?"Pi and receiver field-session IDs match.":route.sessionMismatch?"Warning: selected Pi and receiver files have different session IDs.":"The pairing could not be verified from session IDs; check the source files."):"Analyze a matching Pi mission and receiver CSV above.";
+ replayRender();
+}
+function exportMergedSession(){
+ const route=replayRoute();
+ if(!route||!route.records||!route.records.length){toast("Analyze a session before exporting merged data.",true);return;}
+ const records=route.records.map((r,index)=>{
+  const imuVerified=r.sidecarMatched&&r.imuConnected===true;
+  return{
+   sample_index:index,
+   sequence:Number.isFinite(r.sequence)?r.sequence:null,
+   tx_timestamp_utc:r.txTimestampUtc||null,
+   tx_timestamp_unix:r.txTimestampUnix==null?null:r.txTimestampUnix,
+   tx_result_timestamp_utc:r.txResultTimeUtc||null,
+   tx_result_timestamp_unix:r.txResultTimeUnix==null?null:r.txResultTimeUnix,
+   gps:{
+    valid:r.gpsValidFromPi==null?validGps(r.latitude,r.longitude):r.gpsValidFromPi,
+    latitude:Number.isFinite(r.latitude)?r.latitude:null,
+    longitude:Number.isFinite(r.longitude)?r.longitude:null,
+    speed_kmh:Number.isFinite(r.speed)?r.speed:null
+   },
+   imu:{
+    health_verified:!!r.sidecarMatched&&typeof r.imuConnected==="boolean",
+    connected_at_sample:r.sidecarMatched?!!r.imuConnected:null,
+    sample_age_s:Number.isFinite(r.imuAgeS)?r.imuAgeS:null,
+    error:r.imuError||null,
+    ax_g:imuVerified&&Number.isFinite(r.ax)?r.ax:null,
+    ay_g:imuVerified&&Number.isFinite(r.ay)?r.ay:null,
+    az_g:imuVerified&&Number.isFinite(r.az)?r.az:null,
+    gx_deg_s:imuVerified&&Number.isFinite(r.gx)?r.gx:null,
+    gy_deg_s:imuVerified&&Number.isFinite(r.gy)?r.gy:null,
+    gz_deg_s:imuVerified&&Number.isFinite(r.gz)?r.gz:null,
+    roll_deg:imuVerified&&Number.isFinite(r.roll)?r.roll:null,
+    pitch_deg:imuVerified&&Number.isFinite(r.pitch)?r.pitch:null,
+    yaw_deg:imuVerified&&Number.isFinite(r.yaw)?r.yaw:null,
+    wire_values_unverified:!imuVerified
+   },
+   transmitter:{
+    tx_outcome:r.txOutcome||"unknown",
+    tx_error:r.txError||null,
+    modem_response:r.txResponse||null,
+    tx_done_is_receiver_ack:false
+   },
+   receiver:{
+    received:!!r.received,
+    receive_timestamp_utc:r.receiveTime||null,
+    receive_epoch_ms:Number.isFinite(r.receiveUnixMs)?r.receiveUnixMs:null,
+    rssi_dbm:Number.isFinite(r.rssi)?r.rssi:null,
+    snr_db:Number.isFinite(r.snr)?r.snr:null,
+    lost_before:Number.isFinite(r.lostBefore)?r.lostBefore:null
+   },
+   loss_class:r.lossClass||(!r.received?"not_received_unattributed":"received"),
+   distance_from_start_m:Number.isFinite(r.distanceM)?Number(r.distanceM.toFixed(3)):null,
+   distance_segment_index:Number.isFinite(r.segment)?r.segment:null,
+   invalid_mission_sample:!!r.invalid
+  };
+ });
+ const summary={
+  mission_samples:records.length,
+  valid_samples:records.filter(r=>!r.invalid_mission_sample).length,
+  received_samples:route.matched,
+  missing_samples:route.lost,
+  observed_pdr_percent:route.pdr,
+  mean_received_rssi_dbm:route.meanRssi,
+  mean_received_snr_db:route.meanSnr,
+  session_verified:!!route.sessionVerified,
+  session_mismatch:!!route.sessionMismatch
+ };
+ const merged={
+  schema_version:"robotcore.merged-session.v1",
+  generated_at_utc:new Date().toISOString(),
+  provenance:{
+   pi_mission_file:route.fileName||null,
+   pi_events_file:route.sidecarFile||null,
+   laptop_receiver_file:route.receiverFileName||null,
+   experiment_id:route.experimentId||"",
+   receiver_experiment_id:route.receiverExperimentId||"",
+   pi_session_id:route.sessionId||"",
+   receiver_session_id:route.receiverFieldSessionId||"",
+   session_verified:!!route.sessionVerified,
+   session_mismatch:!!route.sessionMismatch,
+   sidecar_present:!!route.sidecarLoaded,
+   timestamp_basis:route.sidecarLoaded?"Pi JSONL sample_recorded timestamps":"sample index only; RCM contains no per-sample timestamp",
+   alignment_warning:route.alignmentWarning||null,
+   radio_config:route.radioConfig||null,
+   pi_manifest:route.manifest||null,
+   pi_manifest_file:route.manifestFile||null
+  },
+  summary,
+  records,
+  auxiliary_events:{
+   pi_samples_skipped_for_gps_fix:route.sidecarSkippedSamples||[],
+   note:"Skipped GPS-fix events are sidecar events, not transmitted RTP samples. They are not added to the TX/RX PDR denominator."
+  }
+ };
+ const name=(route.sessionId||route.experimentId||"unlabelled").replace(/[^A-Za-z0-9_-]+/g,"-");
+ download(new Blob([JSON.stringify(merged,null,2)],{type:"application/json;charset=utf-8"}),"robotcore_merged_"+name+".json");
+ $("replayStatus").textContent="Exported "+records.length+" aligned samples. Session ID "+(route.sessionVerified?"verified":"not verified")+"; timestamp basis: "+merged.provenance.timestamp_basis+".";
+ toast("Exported merged JSON. Check provenance.session_verified before using it as ML training truth.");
+}
+function clearComparison(){replayStop();S.routeA=null;S.routeB=null;if(S.compareLayer)S.compareLayer.clearLayers();if(S.replayLayer)S.replayLayer.clearLayers();["missionA","receiverA","eventsA","missionB","receiverB","eventsB"].forEach(id=>$(id).value="");["pdrA","lostA","pdrB","lostB"].forEach(id=>$(id).textContent="—");$("exportLossBtn").disabled=true;$("compareStatus").textContent="Files are parsed locally in this browser."; $("segmentRows").innerHTML='<tr><td colspan="8" class="muted">No comparison computed yet.</td></tr>';$("mapModeTag").textContent="MANIT / live";updateRouteStatus();verdict();cloudData();drawCloud();setupReplay("A");centerManit();}
 function deviceCard(name,status,sub,act,label,act2,label2){const cls=status.indexOf("Connected")===0||status==="Recording"||status==="Available"?"ok":status==="Waiting"||status==="Unsupported"?"warn":"";return'<div class="device-card"><div class="device-title"><strong>'+esc(name)+'</strong><span class="badge '+cls+'">'+esc(status)+'</span></div><div class="device-sub">'+esc(sub)+'</div><div class="device-actions">'+(act?'<button class="btn small" data-action="'+act+'">'+esc(label||act)+'</button>':"")+(act2?'<button class="btn small secondary" data-action="'+act2+'">'+esc(label2||act2)+'</button>':"")+'</div></div>';}
 function renderStatus(){const fresh=Date.now()-S.lastPacketAt<10000,tx=S.latest?(fresh?"Connected (RTP observed)":"Stale telemetry"):"Waiting";const gps=S.lastGps&&Date.now()-S.lastGpsAt<15000?"Connected (valid fix)":"Waiting";const imu=S.bleConnected?"Connected":S.latestImu&&S.latestImu.protocol==="RTPv2"?"Fields present · health unverified":S.latestImu&&S.latestImu.protocol==="WT901BLE68 BLE"?"Disconnected · last sample":"Waiting";const remoteRadio=S.remote.connected&&S.remote.serverStatus&&S.remote.serverStatus.serial_connected?(S.remote.serverStatus.radio_configured?"Receiver & radio configured":"Serial open · radio config unverified"):S.remote.connected?"Authenticated · checking receiver":"Not connected";$("deviceGrid").innerHTML=
 deviceCard("Laptop / browser",window.isSecureContext?"Available":"Limited","Secure context: "+(window.isSecureContext?"yes":"no")+" · Web Serial "+(navigator.serial?"available":"unsupported")+" · Web Bluetooth "+(navigator.bluetooth?"available":"unsupported"),null,null,null,null)+deviceCard("RTP decoder / CRC",S.protocolOk?"Healthy":"Failed","CRC-16/CCITT-FALSE known-vector self-check. Each incoming RTP frame is separately CRC-validated.",null,null,null,null)+
@@ -304,7 +824,7 @@ deviceCard("WT901BLE68 IMU",imu,S.bleConnected?(S.imuDevice.name||"BLE notificat
 deviceCard("Browser backup capture",S.recording?"Recording":"Stopped · "+S.sessionRecords.length+" backup rows",window.indexedDB?"Optional browser-local backup only; the primary field receiver CSV is written by the laptop bridge.":"IndexedDB unavailable; export before closing.",S.recording?"stop-recording":"start-recording",S.recording?"Stop backup":"Start backup","export-laptop","Save CSV");
 $("statusCount").textContent=[S.lora.verified,S.bleConnected,S.recording].filter(Boolean).length;}
 function statusOpen(){$("statusOverlay").hidden=false;renderStatus();}
-function bind(){ const piUrl=$("piConsoleUrl");if(piUrl){piUrl.value=localStorage.getItem("robotcore-pi-field-console-url")||"";$("openPiConsoleBtn").addEventListener("click",openLocalFieldConsole);piUrl.addEventListener("keydown",e=>{if(e.key==="Enter")openLocalFieldConsole();});} $("connectRemoteBtn").addEventListener("click",connectRemoteBridge);$("disconnectRemoteBtn").addEventListener("click",disconnectRemoteBridge);$("statusBtn").addEventListener("click",statusOpen);$("closeStatusBtn").addEventListener("click",()=>$("statusOverlay").hidden=true);$("statusOverlay").addEventListener("click",e=>{if(e.target===$("statusOverlay"))$("statusOverlay").hidden=true;});document.addEventListener("keydown",e=>{if(e.key==="Escape")$("statusOverlay").hidden=true;});$("recordBtn").addEventListener("click",toggleRecording);$("exportLaptopBtn").addEventListener("click",exportLaptop);$("centerManitBtn").addEventListener("click",centerManit);$("followBtn").addEventListener("click",()=>{S.follow=!S.follow;$("followBtn").textContent="Follow live: "+(S.follow?"ON":"OFF");$("followBtn").classList.toggle("active",S.follow);});$("clearLiveMapBtn").addEventListener("click",clearLiveMap);document.querySelectorAll("[data-chart]").forEach(b=>b.addEventListener("click",()=>{S.chartMode=b.getAttribute("data-chart");document.querySelectorAll("[data-chart]").forEach(x=>{x.classList.toggle("active",x===b);x.classList.toggle("secondary",x!==b);});drawChart();}));$("compareBtn").addEventListener("click",compareFiles);$("exportLossBtn").addEventListener("click",exportLoss);$("clearCompareBtn").addEventListener("click",clearComparison);$("segmentLength").addEventListener("change",()=>{if(S.routeA){makeBins(S.routeA,Number($("segmentLength").value));if(S.routeB)makeBins(S.routeB,Number($("segmentLength").value));renderBins();}});$("cloudColorMode").addEventListener("change",drawCloud);$("resetCloudBtn").addEventListener("click",()=>{S.yaw=-.68;S.pitch=.56;S.scale=1;drawCloud();});$("deviceGrid").addEventListener("click",async e=>{const b=e.target.closest("button[data-action]");if(!b)return;const a=b.dataset.action;if(a==="connect-lora")await connectLora();else if(a==="disconnect-lora")await disconnectLora();else if(a==="connect-imu")await connectImu();else if(a==="disconnect-imu")await disconnectImu();else if(a==="start-recording"||a==="stop-recording")await toggleRecording();else if(a==="export-laptop")await exportLaptop();else if(a==="center-map"){centerManit();if(S.lastGps&&S.map)S.map.setView([S.lastGps.latitude,S.lastGps.longitude],17);}else if(a==="open-compare"){$("statusOverlay").hidden=true;$("missionA").focus();}else if(a==="focus-remote"){$("remoteBridgeUrl").focus();}renderStatus();});const c=$("cloudCanvas");c.addEventListener("pointerdown",e=>{S.drag={x:e.clientX,y:e.clientY};c.setPointerCapture(e.pointerId);});c.addEventListener("pointermove",e=>{if(!S.drag)return;S.yaw+=(e.clientX-S.drag.x)*.008;S.pitch=Math.max(-1.25,Math.min(1.25,S.pitch+(e.clientY-S.drag.y)*.006));S.drag={x:e.clientX,y:e.clientY};drawCloud();});["pointerup","pointercancel"].forEach(k=>c.addEventListener(k,()=>S.drag=null));c.addEventListener("wheel",e=>{e.preventDefault();S.scale=Math.max(.4,Math.min(3,S.scale*(e.deltaY>0?.9:1.1)));drawCloud();},{passive:false});window.addEventListener("resize",()=>{drawChart();drawCloud();if(S.map)setTimeout(()=>S.map.invalidateSize(),100);});}
-function init(){const vector=new TextEncoder().encode("123456789");S.protocolOk=crc16(vector,vector.length)===0x29B1;if(!S.protocolOk)toast("Protocol CRC self-check failed; do not trust decoded packets.",true);initMap();bind();updateMetrics();updateReadings();updateImu();drawChart();cloudData();drawCloud();renderStatus();updateRouteStatus();verdict();if(navigator.serial)navigator.serial.addEventListener("disconnect",e=>{if(e.target===S.lora.port){S.lora.connected=false;S.lora.running=false;S.lora.port=null;renderStatus();toast("USB serial device disconnected.");}});setInterval(()=>{updateMetrics();renderStatus();},2000);}
+function bind(){ const piUrl=$("piConsoleUrl");if(piUrl){piUrl.value=localStorage.getItem("robotcore-pi-field-console-url")||"";$("openPiConsoleBtn").addEventListener("click",openLocalFieldConsole);piUrl.addEventListener("keydown",e=>{if(e.key==="Enter")openLocalFieldConsole();});} $("connectRemoteBtn").addEventListener("click",connectRemoteBridge);$("disconnectRemoteBtn").addEventListener("click",disconnectRemoteBridge);$("statusBtn").addEventListener("click",statusOpen);$("closeStatusBtn").addEventListener("click",()=>$("statusOverlay").hidden=true);$("statusOverlay").addEventListener("click",e=>{if(e.target===$("statusOverlay"))$("statusOverlay").hidden=true;});document.addEventListener("keydown",e=>{if(e.key==="Escape")$("statusOverlay").hidden=true;});$("recordBtn").addEventListener("click",toggleRecording);$("exportLaptopBtn").addEventListener("click",exportLaptop);$("centerManitBtn").addEventListener("click",centerManit);$("followBtn").addEventListener("click",()=>{S.follow=!S.follow;$("followBtn").textContent="Follow live: "+(S.follow?"ON":"OFF");$("followBtn").classList.toggle("active",S.follow);});$("clearLiveMapBtn").addEventListener("click",clearLiveMap);document.querySelectorAll("[data-chart]").forEach(b=>b.addEventListener("click",()=>{S.chartMode=b.getAttribute("data-chart");document.querySelectorAll("[data-chart]").forEach(x=>{x.classList.toggle("active",x===b);x.classList.toggle("secondary",x!==b);});drawChart();}));$("compareBtn").addEventListener("click",compareFiles);$("exportLossBtn").addEventListener("click",exportLoss);$("clearCompareBtn").addEventListener("click",clearComparison);$("replayRoute").addEventListener("change",()=>setupReplay($("replayRoute").value));$("replayPlayBtn").addEventListener("click",replayToggle);$("replayPrevBtn").addEventListener("click",()=>replayStep(-1));$("replayNextBtn").addEventListener("click",()=>replayStep(1));$("replaySeek").addEventListener("input",()=>{replayStop();S.replay.index=Number($("replaySeek").value)||0;replayRender();});$("replaySpeed").addEventListener("change",()=>{if(S.replay.playing){replayStop();replayToggle();}});$("exportMergedBtn").addEventListener("click",exportMergedSession);$("segmentLength").addEventListener("change",()=>{if(S.routeA){makeBins(S.routeA,Number($("segmentLength").value));if(S.routeB)makeBins(S.routeB,Number($("segmentLength").value));renderBins();}});$("cloudColorMode").addEventListener("change",drawCloud);$("resetCloudBtn").addEventListener("click",()=>{S.yaw=-.68;S.pitch=.56;S.scale=1;drawCloud();});$("deviceGrid").addEventListener("click",async e=>{const b=e.target.closest("button[data-action]");if(!b)return;const a=b.dataset.action;if(a==="connect-lora")await connectLora();else if(a==="disconnect-lora")await disconnectLora();else if(a==="connect-imu")await connectImu();else if(a==="disconnect-imu")await disconnectImu();else if(a==="start-recording"||a==="stop-recording")await toggleRecording();else if(a==="export-laptop")await exportLaptop();else if(a==="center-map"){centerManit();if(S.lastGps&&S.map)S.map.setView([S.lastGps.latitude,S.lastGps.longitude],17);}else if(a==="open-compare"){$("statusOverlay").hidden=true;$("missionA").focus();}else if(a==="focus-remote"){$("remoteBridgeUrl").focus();}renderStatus();});const c=$("cloudCanvas");c.addEventListener("pointerdown",e=>{S.drag={x:e.clientX,y:e.clientY};c.setPointerCapture(e.pointerId);});c.addEventListener("pointermove",e=>{if(!S.drag)return;S.yaw+=(e.clientX-S.drag.x)*.008;S.pitch=Math.max(-1.25,Math.min(1.25,S.pitch+(e.clientY-S.drag.y)*.006));S.drag={x:e.clientX,y:e.clientY};drawCloud();});["pointerup","pointercancel"].forEach(k=>c.addEventListener(k,()=>S.drag=null));c.addEventListener("wheel",e=>{e.preventDefault();S.scale=Math.max(.4,Math.min(3,S.scale*(e.deltaY>0?.9:1.1)));drawCloud();},{passive:false});window.addEventListener("resize",()=>{drawChart();drawCloud();if(S.map)setTimeout(()=>S.map.invalidateSize(),100);});}
+function init(){const vector=new TextEncoder().encode("123456789");S.protocolOk=crc16(vector,vector.length)===0x29B1;if(!S.protocolOk)toast("Protocol CRC self-check failed; do not trust decoded packets.",true);initMap();bind();bindFieldSession();updateMetrics();updateReadings();updateImu();drawChart();cloudData();drawCloud();renderStatus();updateRouteStatus();verdict();setupReplay("A");if(navigator.serial)navigator.serial.addEventListener("disconnect",e=>{if(e.target===S.lora.port){S.lora.connected=false;S.lora.running=false;S.lora.port=null;renderStatus();toast("USB serial device disconnected.");}});setInterval(()=>{updateMetrics();renderStatus();},2000);}
 if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",init);else init();
 })();

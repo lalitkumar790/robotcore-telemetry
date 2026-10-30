@@ -111,7 +111,7 @@ function updateCanStart(){
   $("stopBtn").disabled=!(S.active||S.rxCaptureActive);
 }
 async function checkPi(){ $("checkBtn").disabled=true;setMessage("preflightMessage","Scanning Pi USB devices and BLE IMU…");
- try{const p=await api("/api/preflight");renderChecks(p);}catch(e){S.piReady=false;setMessage("preflightMessage","Pi preflight request failed: "+e.message,"error");updateCanStart();}
+ try{const p=await api("/api/preflight",{headers:{"Authorization":"Bearer "+controlToken()}});renderChecks(p);}catch(e){S.piReady=false;setMessage("preflightMessage","Pi preflight request failed: "+e.message,"error");updateCanStart();}
  finally{$("checkBtn").disabled=false;}}
 async function checkReceiver(silent){
   if(!baseUrl()||!receiverToken()){S.rxReady=false;setPill("receiverPill","Missing URL/token","warn");if(!silent)setMessage("receiverMessage","Enter the laptop bridge URL and token from its console.","warn");updateCanStart();return null;}
@@ -149,7 +149,7 @@ async function startSession(){
   try{
     const currentReceiver=await checkReceiver(false);
     if(currentReceiver&&currentReceiver.capture_active)throw Error("A receiver capture is already active. Press Stop and save before starting another session.");
-    const pre=await api("/api/preflight");renderChecks(pre);
+    const pre=await api("/api/preflight",{headers:{"Authorization":"Bearer "+controlToken()}});renderChecks(pre);
     if(!pre.ok)throw Error("Pi preflight failed; see device details above.");
     const rx=await checkReceiver(false);if(!rx||!rx.serial_connected||!rx.radio_configured)throw Error("Laptop receiver is not ready; no session was started.");
     await receiverApi("/api/session/start",{method:"POST",body:JSON.stringify({experiment_id:exp,session_id:sid})});rxStarted=true;

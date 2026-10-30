@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
@@ -23,6 +24,9 @@ from device_discovery import select_serial_port, serial_candidates
 from config import GPS_VID_PID, LORA_VID_PID
 
 PI_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(PI_DIR.parent / "common"))
+from pairing_announcer import TunnelPairingAnnouncer
+
 MISSIONS_PATH = Path(MISSIONS_DIR).expanduser()
 if not MISSIONS_PATH.is_absolute():
     MISSIONS_PATH = (PI_DIR / MISSIONS_PATH).resolve()
@@ -43,13 +47,13 @@ def _safe_name(value: str) -> str:
 
 
 def _authorized(header: str | None) -> bool:
-    if not CONSOLE_TOKEN:
-        return False
     value = (header or "").strip()
     if value.lower().startswith("bearer "):
         value = value[7:].strip()
+    if not value:
+        return False
     import hmac
-    return bool(value) and hmac.compare_digest(value, CONSOLE_TOKEN)
+    return (bool(CONSOLE_TOKEN) and hmac.compare_digest(value, CONSOLE_TOKEN)) or ANNOUNCER.authorize("Bearer " + value)
 
 
 class StartRequest(BaseModel):
@@ -58,7 +62,8 @@ class StartRequest(BaseModel):
 
 
 class FieldController:
-    def __init__(self) -> None:
+    def __init__(self, announcer: TunnelPairingAnnouncer) -> None:
+        self.announcer = announcer
         self.lock = threading.RLock()
         self.process: subprocess.Popen | None = None
         self.log_handle = None
@@ -80,6 +85,8 @@ class FieldController:
             if self.log_handle:
                 self.log_handle.close()
                 self.log_handle = None
+            if self.state in {"failed", "stopped"}:
+                self.announcer.resume_after_recording()
 
     def _tail(self, limit: int = 30) -> list[str]:
         if not self.log_path or not self.log_path.exists():
@@ -128,6 +135,7 @@ class FieldController:
                 "log_file": str(self.log_path) if self.log_path else None,
                 "log_tail": lines,
                 "mission_files": files,
+                "connection": self.announcer.status(),
             }
 
     def start(self, experiment_id: str, session_id: str) -> dict[str, Any]:
@@ -137,10 +145,14 @@ class FieldController:
                 raise HTTPException(status_code=409, detail="A field session is already running.")
             if not valid_id(experiment_id) or not valid_id(session_id):
                 raise HTTPException(status_code=422, detail="Experiment and session IDs may contain letters, numbers, dots, underscores and dashes only.")
+
+            # Prepare the unique log before releasing the pairing radio. If storage
+            # fails, pairing continues instead of leaving the device without beaconing.
             MISSIONS_PATH.mkdir(parents=True, exist_ok=True)
             log_path = MISSIONS_PATH / ("session_" + _safe_name(session_id) + ".log")
             if log_path.exists():
                 raise HTTPException(status_code=409, detail="This session ID already has a Pi run log. Generate a new session.")
+
             env = os.environ.copy()
             env["ROBOTCORE_EXPERIMENT_ID"] = experiment_id
             env["ROBOTCORE_SESSION_ID"] = session_id
@@ -148,6 +160,14 @@ class FieldController:
             if IMU_ADDRESS:
                 env["ROBOTCORE_IMU_ADDRESS"] = IMU_ADDRESS
             handle = log_path.open("x", encoding="utf-8", buffering=1)
+            if not self.announcer.pause_for_recording():
+                handle.close()
+                try:
+                    log_path.unlink()
+                except OSError:
+                    pass
+                raise HTTPException(status_code=503, detail="Could not release the LoRa radio from pairing mode. Check the Pi connection status and retry.")
+
             command = [
                 sys.executable, str(PI_DIR / "runner.py"),
                 "--require-lora", "--imu-startup-timeout", "120",
@@ -160,6 +180,11 @@ class FieldController:
                 )
             except Exception:
                 handle.close()
+                self.announcer.resume_after_recording()
+                try:
+                    log_path.unlink()
+                except OSError:
+                    pass
                 raise
             self.process = process
             self.log_handle = handle
@@ -200,11 +225,27 @@ class FieldController:
             elif self.last_exit_code is not None:
                 self.state = "failed"
             self.ended_at = self.ended_at or _utc_now()
+            self.announcer.resume_after_recording()
             return self.status()
 
 
-controller = FieldController()
+ANNOUNCER = TunnelPairingAnnouncer()
+controller = FieldController(ANNOUNCER)
 app = FastAPI(title="RobotCore Local Field Console", docs_url=None, redoc_url=None, openapi_url=None)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://robotcore-telemetry.vercel.app"],
+    allow_origin_regex=r"^http://(?:localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2[0-9]|3[01])(?:\.\d{1,3}){2})(?::\d+)?$",
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+    allow_credentials=False,
+)
+
+
+@app.on_event("startup")
+def startup_event() -> None:
+    if not ANNOUNCER.is_alive():
+        ANNOUNCER.start()
 
 
 @app.get("/", include_in_schema=False)
@@ -271,8 +312,17 @@ async def run_preflight() -> dict[str, Any]:
 
 
 @app.get("/api/preflight")
-async def preflight() -> dict[str, Any]:
+async def preflight(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    if not _authorized(authorization):
+        raise HTTPException(status_code=401, detail="Field-console token is missing or invalid.")
     return await run_preflight()
+
+
+@app.get("/api/connection")
+def connection_status(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    if not _authorized(authorization):
+        raise HTTPException(status_code=401, detail="Field-console token is missing or invalid.")
+    return ANNOUNCER.status()
 
 
 @app.get("/api/status")
@@ -301,12 +351,69 @@ def stop_session(authorization: str | None = Header(default=None)) -> dict[str, 
     return controller.stop()
 
 
+@app.get("/api/session/files")
+def session_files(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    if not _authorized(authorization):
+        raise HTTPException(status_code=401, detail="Field-console token is missing or invalid.")
+    status = controller.status()
+    if status.get("state") == "running":
+        raise HTTPException(status_code=409, detail="Stop the Pi mission before syncing its files.")
+    with controller.lock:
+        session_id = controller.session_id
+        experiment_id = controller.experiment_id
+    if not session_id:
+        raise HTTPException(status_code=404, detail="No completed Pi session is available.")
+    needle = _safe_name(session_id)
+    allowed_suffixes = (".rcm", ".events.jsonl", ".manifest.json")
+    files = []
+    for path in sorted(MISSIONS_PATH.glob("*" + needle + "*")):
+        if not path.is_file() or not path.name.endswith(allowed_suffixes):
+            continue
+        files.append({
+            "name": path.name,
+            "size_bytes": path.stat().st_size,
+            "kind": "mission" if path.name.endswith(".rcm") else "events" if path.name.endswith(".events.jsonl") else "manifest",
+            "download": "/api/session/files/" + path.name,
+        })
+    if not any(item["kind"] == "mission" for item in files):
+        raise HTTPException(status_code=404, detail="Completed session mission file was not found.")
+    return {
+        "session_id": session_id,
+        "experiment_id": experiment_id,
+        "files": files,
+    }
+
+
+@app.get("/api/session/files/{filename}")
+def download_session_file(
+    filename: str,
+    authorization: str | None = Header(default=None),
+) -> FileResponse:
+    if not _authorized(authorization):
+        raise HTTPException(status_code=401, detail="Field-console token is missing or invalid.")
+    with controller.lock:
+        session_id = controller.session_id
+        running = controller.process is not None and controller.process.poll() is None
+    if running:
+        raise HTTPException(status_code=409, detail="Stop the Pi mission before downloading session files.")
+    if not session_id or Path(filename).name != filename or _safe_name(filename) != filename:
+        raise HTTPException(status_code=404, detail="Session file not found.")
+    if not filename.endswith((".rcm", ".events.jsonl", ".manifest.json")) or _safe_name(session_id) not in filename:
+        raise HTTPException(status_code=404, detail="Session file not found.")
+    path = (MISSIONS_PATH / filename).resolve()
+    if path.parent != MISSIONS_PATH.resolve() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Session file not found.")
+    media_type = "application/octet-stream" if filename.endswith(".rcm") else "application/json"
+    return FileResponse(path, media_type=media_type, filename=filename)
+
+
 @app.on_event("shutdown")
 def shutdown_event() -> None:
     try:
         controller.stop()
     except Exception:
         pass
+    ANNOUNCER.stop()
 
 
 def main() -> None:
