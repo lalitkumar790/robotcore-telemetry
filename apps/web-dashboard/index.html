@@ -139,6 +139,33 @@ a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}butto
   <div class="mapnote" id="comparisonVerdict"><strong>How this identifies the better route:</strong> every Pi mission sequence is compared with the receiver log. Missing sequences are mapped at their transmitter GPS positions, then link delivery is summarized in distance-based bins. A route comparison is valid only when the files come from matching transmitter/receiver sessions and comparable radio settings.</div>
   <div class="tablewrap"><table><thead><tr><th>Distance from start</th><th>Route A samples</th><th>Route A PDR</th><th>Route A TX fails</th><th>Route B samples</th><th>Route B PDR</th><th>Route B TX fails</th><th>Better in segment</th></tr></thead><tbody id="segmentRows"><tr><td colspan="8" class="muted">No comparison computed yet.</td></tr></tbody></table></div>
 </section>
+<section class="panel section" id="replayPanel">
+  <div class="panelhead">
+    <div><h3>Session replay · transmitted vs received</h3><div class="subhead">Replays the merged Pi mission, sidecar events and laptop observations in sequence order. Recorded timestamps are shown when the Pi sidecar exists; otherwise replay is sample-index based.</div></div>
+    <span class="tag" id="replayTag">No merged session</span>
+  </div>
+  <div class="cloud-options">
+    <label class="status" for="replayRoute">Session</label>
+    <select class="select" id="replayRoute"><option value="A">Route A</option><option value="B" disabled>Route B</option></select>
+    <button class="btn" id="replayPlayBtn" disabled>▶ Play</button>
+    <button class="btn secondary" id="replayPrevBtn" disabled>◀ Step back</button>
+    <button class="btn secondary" id="replayNextBtn" disabled>Step forward ▶</button>
+    <label class="status" for="replaySpeed">Speed</label>
+    <select class="select" id="replaySpeed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+    <span class="status" id="replayProgress">0 / 0</span>
+  </div>
+  <input id="replaySeek" type="range" min="0" max="0" value="0" disabled style="width:100%;margin:14px 0">
+  <div class="latest-grid">
+    <div class="reading"><span>TX sequence</span><strong id="replaySequence">—</strong><small id="replayTimestamp">Timestamp unavailable</small></div>
+    <div class="reading"><span>Receiver outcome</span><strong id="replayOutcome">—</strong><small id="replayLossClass">No merged sample</small></div>
+    <div class="reading"><span>Link quality</span><strong id="replayRssi">—</strong><small id="replaySnr">SNR —</small></div>
+    <div class="reading"><span>Pi GPS position</span><strong id="replayCoords">—</strong><small id="replayDistance">Distance —</small></div>
+  </div>
+  <div class="compare-actions">
+    <button class="btn secondary" id="exportMergedBtn" disabled>Export merged session JSON</button>
+    <span class="status" id="replayStatus">Analyze Route A above to prepare the replay and merged dataset.</span>
+  </div>
+</section>
 <section class="panel section">
   <div class="panelhead"><div><h3>Research pipeline</h3><div class="subhead">The order of work protects reproducibility and prevents receiver gaps from being mistaken for a continuous path.</div></div></div>
   <div class="workflow">
