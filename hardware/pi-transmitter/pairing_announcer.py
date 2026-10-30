@@ -35,7 +35,8 @@ class TunnelPairingAnnouncer(threading.Thread):
         self.tunnel_state = "not_started"
         self.beacon_state = "waiting"
         self.tunnel_url: str | None = None
-        self.control_token: str | None = None
+        self._stable_control_token = secrets.token_urlsafe(32)
+        self.control_token: str | None = self._stable_control_token
         self.device_id = os.getenv("ROBOTCORE_DEVICE_ID", "").strip() or ("pi-" + uuid.uuid4().hex[:12])
         self.last_beacon_at: float | None = None
         self.last_beacon_outcome: str | None = None
@@ -164,7 +165,7 @@ class TunnelPairingAnnouncer(threading.Thread):
             name="RobotCoreCloudflaredOutput",
         )
         self._reader.start()
-        self._set(tunnel_state="connecting", state="connecting_tunnel", tunnel_url=None, control_token=None, last_error=None)
+        self._set(tunnel_state="connecting", state="connecting_tunnel", tunnel_url=None, control_token=self._stable_control_token, last_error=None)
 
         deadline = time.monotonic() + 60.0
         while not self.stop_event.is_set() and time.monotonic() < deadline:
@@ -184,7 +185,7 @@ class TunnelPairingAnnouncer(threading.Thread):
             if not match:
                 continue
             url = match.group(0).rstrip(".,;)")
-            token = secrets.token_urlsafe(32)
+            token = self._stable_control_token
             self._set(
                 tunnel_url=url,
                 control_token=token,
@@ -216,7 +217,7 @@ class TunnelPairingAnnouncer(threading.Thread):
                     pass
         with self.lock:
             self.tunnel_url = None
-            self.control_token = None
+            self.control_token = self._stable_control_token
             if self.tunnel_state not in {"cloudflared_missing", "not_started"}:
                 self.tunnel_state = "stopped"
 
