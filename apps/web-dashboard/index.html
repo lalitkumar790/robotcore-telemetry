@@ -16,6 +16,7 @@ a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}butto
 @media(max-width:1050px){.main-grid,.duo,.comparison-grid{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.summarycards{grid-template-columns:repeat(2,minmax(0,1fr))}.intro{align-items:flex-start;flex-direction:column}.statusline{min-width:auto}.workflow{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px){.shell{padding:14px}.top{align-items:flex-start;flex-direction:column}.topright{justify-content:flex-start}.metric{padding:12px}.metric .value{font-size:21px}.panel{padding:13px}.mapframe{height:300px}.chart{height:190px}.workflow{grid-template-columns:repeat(2,minmax(0,1fr))}.devicegrid{grid-template-columns:1fr}.drawer{padding:14px}.imu-panel{gap:6px}.imu-stat{padding:9px}.imu-stat strong{font-size:16px}.latest-grid{gap:6px}.reading{padding:8px}.reading strong{font-size:15px}}
 .field-console-banner{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.8fr);gap:18px;align-items:center;margin:0 0 14px;padding:16px 18px;border:1px solid #35536a;border-radius:13px;background:linear-gradient(120deg,#112a3c,#101a28)}.field-console-banner h3{font-size:15px;margin:5px 0}.field-console-banner p{margin:0;color:var(--muted);font-size:12px;max-width:800px}.field-console-open{display:grid;gap:7px}.field-console-open label{font-size:11px;color:var(--muted)}.field-console-open input{width:100%;min-width:0;color:var(--text);border:1px solid #34485d;border-radius:8px;background:#08121d;padding:9px 10px;font-size:12px}.field-console-open .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.field-console-open .small-note{font-size:10px;color:var(--muted)}@media(max-width:760px){.field-console-banner{grid-template-columns:1fr;padding:14px}.field-console-open .actions .btn{width:100%}}
+.field-console-banner .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:11px}.field-console-banner .pill{background:#0a1520}.field-console-banner .pill.ready{color:var(--cyan);border-color:#315c56}.field-console-banner .pill.error{color:var(--red);border-color:#75404a}.field-console-open input{margin-top:2px}.field-console-open .btn.danger{border-color:#70424b;background:#2c1a20;color:#ffc4ca}.field-console-open .btn:disabled{opacity:.42}.field-console-open .small-note{overflow-wrap:anywhere}
 </style>
 </head>
 <body>
@@ -34,17 +35,28 @@ a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}butto
   <div><div class="eyebrow">Communication-aware robotics · MANIT Bhopal</div><h2>Measure the link. Understand the space. Plan with evidence.</h2><p>Live LoRa/GPS/IMU monitoring, loss-aware path mapping, browser-local capture, and a 3D coordinate cloud. Real measurements are distinguished from missing or inferred data.</p></div>
   <div class="statusline"><strong id="systemHeadline">Awaiting devices</strong><span id="systemSub">Map centered on MANIT · 23.213622, 77.408091</span></div>
 </section>
-<section class="field-console-banner" aria-label="Local field session console">
+<section class="field-console-banner" id="fieldSessionPanel" aria-label="Autonomous field session">
   <div>
-    <div class="eyebrow">Recommended for field collection</div>
-    <h3>One session ID · start both recorders together · no Cloudflare tunnel</h3>
-    <p>For a new campus walk, open the local Field Console served by the Pi. It checks GPS, LoRa-E5 and the WitMotion sensor, pairs the Pi mission with the laptop CSV, shows startup/retry logs, and provides one Stop & Save button. The hosted dashboard below remains useful for live analysis and post-walk comparison.</p>
+    <div class="eyebrow">Autonomous field link · Pi → LoRa → laptop → dashboard</div>
+    <h3 id="fieldPairTitle">Waiting for the Pi pairing beacon</h3>
+    <p id="fieldPairMessage">The Pi checks internet connectivity, opens its temporary HTTPS endpoint, and announces the endpoint plus a short-lived control token in an encrypted LoRa beacon. The laptop receives it and this local dashboard pairs automatically. No Pi SSH login or laptop tunnel command is needed for each run.</p>
+    <div class="actions">
+      <span class="pill warn" id="fieldPairBadge">Not paired</span>
+      <span class="status" id="fieldReceiverStatus">Laptop receiver: checking</span>
+      <span class="status" id="fieldPiStatus">Pi: waiting</span>
+    </div>
+    <div class="small-note" id="fieldPairMeta">For automatic pairing, open this dashboard from the laptop field-station address (http://laptop-ip:8765), not the public Vercel page. The hosted page remains available for remote review and replay.</div>
   </div>
   <div class="field-console-open">
-    <label for="piConsoleUrl">Raspberry Pi Field Console URL</label>
-    <input id="piConsoleUrl" type="url" inputmode="url" placeholder="http://10.222.153.188:8766/field-console" value="">
-    <div class="actions"><button class="btn" id="openPiConsoleBtn">Open local Field Console ↗</button><span class="status" id="piConsoleHint">Local network required</span></div>
-    <div class="small-note">Phone, Pi and laptop must be able to reach each other on the same private LAN/hotspot. Don’t expose port 8766 to the public internet.</div>
+    <label for="fieldExperimentId">Experiment label</label>
+    <input id="fieldExperimentId" type="text" maxlength="80" value="MANIT-20261030-A">
+    <div class="actions">
+      <button class="btn" id="fieldStartBtn" disabled>▶ Start paired recording</button>
+      <button class="btn danger" id="fieldStopBtn" disabled>■ Stop & save both files</button>
+    </div>
+    <div class="small-note" id="fieldSessionMessage">Start unlocks when the Pi tunnel beacon is fresh, all Pi sensors pass preflight, and the laptop radio is configured.</div>
+    <div class="small-note" id="fieldSessionIdentity">Session: —</div>
+    <div class="small-note" id="fieldSessionFiles">Paired Pi mission + sidecar + manifest + laptop CSV will appear here.</div>
   </div>
 </section>
 <section class="grid metrics" aria-label="Live telemetry summary">
