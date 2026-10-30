@@ -100,6 +100,7 @@ def create_app(
     worker_holder: dict[str, ReceiverWorker] = {}
     last_record: dict[str, Any] = {}
     pairing_state: dict[str, Any] = {"descriptor": None, "received_at": None}
+    pi_status_state: dict[str, Any] = {"status": None, "received_at": None}
     pairing_lock = threading.RLock()
 
     async def broadcast(message: dict) -> None:
@@ -133,6 +134,11 @@ def create_app(
             pairing_state["descriptor"] = dict(descriptor)
             pairing_state["received_at"] = time.time()
 
+    def pi_status_callback(status: dict) -> None:
+        with pairing_lock:
+            pi_status_state["status"] = dict(status)
+            pi_status_state["received_at"] = time.time()
+
     def status_callback() -> None:
         loop = loop_holder.get("loop")
         if loop and not loop.is_closed():
@@ -159,6 +165,11 @@ def create_app(
                 "device_id": pairing_state["descriptor"].get("device_id") if pairing_state["descriptor"] else None,
                 "last_seen_at": pairing_state["received_at"],
             },
+            "pi_status_beacon": {
+                "status": dict(pi_status_state["status"] or {}),
+                "last_seen_at": pi_status_state["received_at"],
+                "stale": not pi_status_state["received_at"] or time.time() - pi_status_state["received_at"] > 30,
+            },
             "radio_config": radio_config,
         })
         return status
@@ -181,6 +192,7 @@ def create_app(
             managed_sessions=managed_sessions,
             auto_detect_port=auto_detect_port,
             on_pairing=pairing_callback,
+            on_pi_status=pi_status_callback,
             pairing_key=pairing_key,
         )
         worker_holder["worker"] = worker
@@ -276,8 +288,19 @@ def create_app(
         with pairing_lock:
             descriptor = dict(pairing_state["descriptor"] or {})
             received_at = pairing_state["received_at"]
+        pi_status = dict(pi_status_state["status"] or {})
+        pi_status_seen = pi_status_state["received_at"]
+        visible_pi_status = {
+            "status": pi_status,
+            "last_seen_at": pi_status_seen,
+            "stale": not pi_status_seen or time.time() - pi_status_seen > 30,
+        }
         if not descriptor or received_at is None:
-            return {"paired": False, "reason": "waiting_for_encrypted_lora_beacon"}
+            return {
+                "paired": False,
+                "reason": "waiting_for_encrypted_lora_beacon",
+                "pi_status": visible_pi_status,
+            }
         now = time.time()
         valid_until = float(descriptor.get("valid_until", 0))
         worker = worker_holder.get("worker")
@@ -294,6 +317,7 @@ def create_app(
                 "device_id": descriptor.get("device_id"),
                 "last_seen_at": received_at,
                 "capture_active": False,
+                "pi_status": visible_pi_status,
             }
         return {
             "paired": True,
@@ -305,6 +329,7 @@ def create_app(
             "issued_at": descriptor["issued_at"],
             "valid_until": descriptor["valid_until"],
             "last_seen_at": received_at,
+            "pi_status": visible_pi_status,
         }
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
