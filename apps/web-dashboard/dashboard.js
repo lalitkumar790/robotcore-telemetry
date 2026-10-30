@@ -170,8 +170,11 @@ function fieldRender(){
   $("fieldPairMeta").textContent="The Pi and laptop must use the same pairing key. If the beacon is not arriving, check that the Pi has internet and the laptop LoRa-E5 is configured.";
   fieldSetPairBadge("Not paired","warn");
  }
- $("fieldReceiverStatus").textContent="Laptop RX: "+(rx.serial_connected?(rx.radio_configured?"radio configured":"serial open · radio unverified"):"disconnected")+(rx.capture_active?" · recording":"");
- $("fieldPiStatus").textContent="Pi: "+(pi.state||"not connected")+(pi.stage?" · "+pi.stage:"");
+ const pairingStatus=rx.pairing||{};
+ $("fieldReceiverStatus").textContent="Laptop RX: "+(rx.serial_connected?(rx.radio_configured?"radio configured":"serial open · radio unverified"):"disconnected")+(rx.capture_active?" · recording":"")+(pairingStatus.received?" · beacon from "+(pairingStatus.device_id||"Pi"):" · waiting for LoRa beacon");
+ const connection=pi.connection||{};
+ $("fieldPiStatus").textContent="Pi internet: "+(connection.internet_connected?"online":"offline")+" · tunnel: "+(connection.tunnel_state||"unknown")+" · "+(pi.state||"not connected")+(pi.stage?" · "+pi.stage:"");
+ if(connection.last_error&&connection.tunnel_state!=="ready")$("fieldPairMessage").textContent="Pi connection detail: "+connection.last_error;
  if(f.sessionId) $("fieldSessionIdentity").textContent="Session: "+f.sessionId+(f.experimentId?" · "+f.experimentId:"");
  const files=[];
  if(pi.mission_files)pi.mission_files.forEach(x=>files.push("Pi: "+x.name));
