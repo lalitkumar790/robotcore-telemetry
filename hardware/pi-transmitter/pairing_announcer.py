@@ -283,7 +283,7 @@ class TunnelPairingAnnouncer(threading.Thread):
                 last_beacon_at=time.time(),
                 last_beacon_outcome=outcome,
                 beacon_state="status_announced" if outcome == "confirmed" else "status_retrying",
-                last_error=None if outcome == "confirmed" else (self.last_error or "LoRa status beacon TX " + response[-200:]),
+                last_error=self.last_error if outcome == "confirmed" else (self.last_error or "LoRa status beacon TX " + response[-200:]),
             )
         except Exception as exc:
             self._set(
