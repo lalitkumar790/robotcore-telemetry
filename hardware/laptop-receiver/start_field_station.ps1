@@ -3,7 +3,16 @@ Set-Location $PSScriptRoot
 
 $Python = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $Python)) {
-    throw "Missing .venv\Scripts\python.exe. Create the laptop receiver venv and install requirements.txt first."
+    throw "Missing .venv\Scripts\python.exe. Create the laptop receiver venv first: py -m venv .venv"
+}
+
+& $Python -c "import cryptography, serial, fastapi, uvicorn" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Installing missing field-station dependencies from requirements.txt..." -ForegroundColor Yellow
+    & $Python -m pip install -r (Join-Path $PSScriptRoot "requirements.txt")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Dependency installation failed. Check laptop internet access and rerun this launcher."
+    }
 }
 
 $keyDirectory = Join-Path $env:USERPROFILE ".robotcore"
