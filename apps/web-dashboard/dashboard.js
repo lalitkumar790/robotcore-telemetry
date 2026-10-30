@@ -231,6 +231,43 @@ async function fieldRefresh(){
   fieldUpdateControls();
  }
 }
+async function fieldDownloadBlob(base,path,token){
+ const headers=token?{Authorization:"Bearer "+token}:{};
+ const response=await fetch(base.replace(/\/+$/,"")+path,{headers,cache:"no-store"});
+ if(!response.ok){
+  let detail="HTTP "+response.status;
+  try{const body=await response.json();detail=typeof body.detail==="string"?body.detail:JSON.stringify(body.detail||body);}catch(_){}
+  throw Error(detail);
+ }
+ return response.blob();
+}
+async function fieldAutoLoadReplay(pair,sessionId){
+ const piBase=pair.tunnel_url,piToken=pair.control_token,rxBase=location.origin,rxToken=S.field.bridgeToken;
+ fieldSetMessage("Both recorders are stopped. Syncing Pi mission, sidecar, manifest and laptop CSV into the replay workspace…","");
+ const [piIndex,rxIndex]=await Promise.all([
+  fieldFetch(piBase,"/api/session/files",piToken),
+  fieldFetch(rxBase,"/api/session/files",rxToken)
+ ]);
+ if(piIndex.session_id!==sessionId||rxIndex.session_id!==sessionId)throw Error("Session ID mismatch while syncing files. Pi="+piIndex.session_id+" · laptop="+rxIndex.session_id+" · expected="+sessionId);
+ const mission=piIndex.files.find(x=>x.kind==="mission"),events=piIndex.files.find(x=>x.kind==="events"),manifest=piIndex.files.find(x=>x.kind==="manifest"),receiver=rxIndex.files.find(x=>x.kind==="receiver");
+ if(!mission||!events||!manifest||!receiver)throw Error("A required session artifact is missing. Pi mission, events, manifest and laptop CSV are all required.");
+ const [mb,eb,fb,rb]=await Promise.all([
+  fieldDownloadBlob(piBase,mission.download,piToken),
+  fieldDownloadBlob(piBase,events.download,piToken),
+  fieldDownloadBlob(piBase,manifest.download,piToken),
+  fieldDownloadBlob(rxBase,receiver.download,rxToken)
+ ]);
+ const files={
+  missionA:new File([mb],mission.name,{type:"application/octet-stream"}),
+  eventsA:new File([eb],events.name,{type:"application/x-ndjson"}),
+  manifestA:new File([fb],manifest.name,{type:"application/json"}),
+  receiverA:new File([rb],receiver.name,{type:"text/csv"})
+ };
+ await compareFiles(files);
+ $("fieldSessionFiles").textContent=[mission.name,events.name,manifest.name,receiver.name].join(" · ");
+ fieldSetMessage("Automatic sync complete · Pi and laptop files share session "+sessionId+". Replay is ready below; export the merged JSON for archival and ML preparation.","good");
+ $("replayPanel").scrollIntoView({behavior:"smooth",block:"start"});
+}
 async function fieldStartPaired(){
  const f=S.field;
  if(!f.bridgeToken||!f.pairing)throw Error("No fresh encrypted Pi pairing beacon is available.");
@@ -268,8 +305,14 @@ async function fieldStopPaired(){
  await fieldFetch(pair.tunnel_url,"/api/session/stop",pair.control_token,{method:"POST"});
  await fieldFetch(location.origin,"/api/session/stop",f.bridgeToken,{method:"POST",body:JSON.stringify({session_id:f.sessionId||""})});
  f.active=false;
- fieldSetMessage("Both recorders stopped. Preserve the Pi .rcm, .events.jsonl, .manifest.json and matching laptop CSV together.","good");
+ fieldSetMessage("Both recorders stopped. Retrieving the four session artifacts…","good");
  await fieldRefresh();
+ try{
+  await fieldAutoLoadReplay(pair,f.sessionId||"");
+ }catch(syncError){
+  fieldSetMessage("Both recorders stopped, but automatic file sync/replay did not complete: "+syncError.message+". The four files remain on the Pi/laptop; check session IDs and retry from the file comparison section.","error");
+  toast("Capture stopped; automatic replay sync failed: "+syncError.message,true);
+ }
 }
 function bindFieldSession(){
  if(!window.ROBOTCORE_FIELD_BOOTSTRAP||!window.ROBOTCORE_FIELD_BOOTSTRAP.bridgeToken)return;
@@ -390,6 +433,13 @@ async function parsePiSidecar(file){
  return{fileName:file.name,experimentId,sessionId,radioConfig,samples,skippedSamples,badLines};
 }
 function decodeMissionPacket(b){if(b.length!==35||b[0]!==0xaa||b[1]!==2||b[2]!==6)throw Error("Expected RTPv2 RobotState packet");if(crc16(b,33)!==((b[33]<<8)|b[34]))throw Error("mission CRC mismatch");const d=new DataView(b.buffer,b.byteOffset,b.byteLength);return{sequence:d.getUint16(3,false),latitude:d.getInt32(5,false)/1e6,longitude:d.getInt32(9,false)/1e6,speed:d.getUint16(13,false)/100,ax:d.getInt16(15,false)/1000,ay:d.getInt16(17,false)/1000,az:d.getInt16(19,false)/1000,gx:d.getInt16(21,false)/10,gy:d.getInt16(23,false)/10,gz:d.getInt16(25,false)/10,roll:d.getInt16(27,false)/100,pitch:d.getInt16(29,false)/100,yaw:d.getInt16(31,false)/100,received:false,source:"pi-mission"};}
+async function parsePiManifest(file){
+ if(!file)return null;
+ let value;
+ try{value=JSON.parse(await file.text());}catch(error){throw Error("Pi manifest is not valid JSON: "+error.message);}
+ if(!value||typeof value!=="object"||value.schema_version!=="1.0.0"||!value.session_id)throw Error("Pi manifest schema or session ID is unsupported.");
+ return value;
+}
 async function parseRcm(file){const b=new Uint8Array(await file.arrayBuffer());if(b.length<13||b[0]!==0x52||b[1]!==0x43||b[2]!==0x4d||b[3]!==0x31)throw Error("Bad RCM header. Select a Pi transmitter .rcm file.");const d=new DataView(b.buffer,b.byteOffset,b.byteLength),version=b[4],start=d.getFloat64(5,false);if(version!==1)throw Error("Unsupported RCM format version "+version);const count=Math.floor((b.length-13)/35),remainder=(b.length-13)%35,records=[];for(let i=0;i<count;i++){const packet=b.slice(13+i*35,13+(i+1)*35);try{const r=decodeMissionPacket(packet);r.index=i;r.missionStartTime=start;records.push(r);}catch(e){records.push({index:i,sequence:(packet[3]<<8)|packet[4],latitude:null,longitude:null,received:false,invalid:true,error:e.message,source:"pi-mission"});}}if(!records.length)throw Error("No complete mission samples were found.");return{fileName:file.name,formatVersion:version,startTime:start,records,remainder,rawBytes:b.length};}
 function mean(v){v=v.filter(Number.isFinite);return v.length?v.reduce((a,b)=>a+b,0)/v.length:null;}
 function alignMission(m,rx,sidecar){
@@ -502,21 +552,29 @@ function verdict(){
 }
 function cloudData(){let rs=[];if(S.routeA)rs=rs.concat(S.routeA.records.map(r=>Object.assign({},r,{route:"A"})));if(S.routeB)rs=rs.concat(S.routeB.records.map(r=>Object.assign({},r,{route:"B"})));if(!rs.length)rs=S.liveRecords.filter(r=>validGps(r.latitude,r.longitude)).slice(-1800);rs=rs.filter(r=>validGps(r.latitude,r.longitude));if(rs.length>3000){const stride=rs.length/3000;rs=Array.from({length:3000},(_,i)=>rs[Math.floor(i*stride)]);}S.cloud=rs;$("cloudCount").textContent=rs.length.toLocaleString()+" points";$("cloudLabel").textContent=rs.length?(S.routeA?"PI SAMPLES · RECEIVED / LOST":"LIVE GPS · 3D"):"NO POINT CLOUD · awaiting GPS";$("cloudCaption").textContent=S.routeA?"Z = sample progression, not altitude. Lost samples use the Pi mission GPS; X/Y are local east/north metres from the first valid point.":"RTPv2 has no altitude field. Until an altitude-enabled source exists, Z represents sample progression—not terrain elevation. Drag to orbit and scroll to zoom.";}
 function drawCloud(){const c=$("cloudCanvas"),dpr=Math.max(1,window.devicePixelRatio||1),rect=c.getBoundingClientRect(),w=Math.max(260,rect.width),h=Math.max(210,rect.height);c.width=Math.round(w*dpr);c.height=Math.round(h*dpr);const x=c.getContext("2d");x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,w,h);const bg=x.createRadialGradient(w*.5,h*.44,5,w*.5,h*.44,Math.max(w,h)*.7);bg.addColorStop(0,"#112633");bg.addColorStop(1,"#09111a");x.fillStyle=bg;x.fillRect(0,0,w,h);const horizon=h*.57;x.strokeStyle="#1e3346";x.lineWidth=1;for(let i=-5;i<=5;i++){x.beginPath();x.moveTo(w/2+i*23,horizon-90);x.lineTo(w/2+i*52,h-17);x.stroke();}for(let j=0;j<6;j++){const y=horizon+j*j*8;x.beginPath();x.moveTo(10,y);x.lineTo(w-10,y);x.stroke();}if(!S.cloud.length){x.fillStyle="#91a3b9";x.textAlign="center";x.font="12px system-ui";x.fillText("Waiting for real coordinates",w/2,h/2-4);x.font="10px system-ui";x.fillText("Connect the LoRa receiver or load Pi / receiver files below",w/2,h/2+17);return;}const a=S.cloud,lat0=a[0].latitude,lon0=a[0].longitude,rad=Math.PI/180,pts=a.map((r,i)=>({x:(r.longitude-lon0)*111320*Math.cos(lat0*rad),y:(r.latitude-lat0)*110540,z:0,r,i})),mx=Math.max(1,...pts.map(p=>Math.abs(p.x))),my=Math.max(1,...pts.map(p=>Math.abs(p.y))),extent=Math.max(mx,my);pts.forEach(p=>{p.z=a.length>1?(p.i/(a.length-1)-.5)*extent*.75:0;});const basis=Math.min(w*.36/mx,h*.32/my)*S.scale,cy=Math.cos(S.yaw),sy=Math.sin(S.yaw),cp=Math.cos(S.pitch),sp=Math.sin(S.pitch),proj=pts.map(p=>{const xx=p.x*cy-p.y*sy,yy=p.x*sy+p.y*cy,zz=p.z*cp-yy*sp,depth=p.z*sp+yy*cp,per=520/(520+depth);return{x:w/2+xx*basis*per,y:h*.53-zz*basis*per,depth,p,per};}).sort((a,b)=>b.depth-a.depth);const ordered=proj.slice().sort((a,b)=>a.p.i-b.p.i);x.strokeStyle="#42738b";x.lineWidth=1.1;x.beginPath();let drew=false;ordered.forEach((p,i)=>{if(!i){x.moveTo(p.x,p.y);drew=true;return;}const a=ordered[i-1],r=p.p.r,pr=a.p.r,hasMission=!!(S.routeA||S.routeB),ok=hasMission?(r.received&&pr.received&&r.route===pr.route&&r.index===pr.index+1):(r.source===pr.source&&(r.source==="lora-rx"||r.source==="remote-receiver")&&r.sourceIndex===pr.sourceIndex+1&&r.sequence!=null&&pr.sequence!=null&&gapInfo(pr.sequence,r.sequence).delta===1);if(!ok){x.moveTo(p.x,p.y);drew=false;return;}x.lineTo(p.x,p.y);drew=true;});x.stroke();const mode=$("cloudColorMode").value;proj.forEach(q=>{const r=q.p.r;let color;if(mode==="route")color=r.route==="B"?"#80b9ff":"#65e0d4";else if(mode==="sequence")color="hsl("+Math.round(185+150*q.p.i/Math.max(1,pts.length-1))+",78%,66%)";else color=r.received===false?"#ff8e9b":rssiColor(r.rssi);x.beginPath();x.arc(q.x,q.y,Math.max(1.5,Math.min(4.8,2.8*q.per)),0,Math.PI*2);x.fillStyle=color;x.shadowColor=color;x.shadowBlur=6*q.per;x.fill();x.shadowBlur=0;});x.textAlign="left";x.font="10px system-ui";x.fillStyle="#95b3c8";x.fillText("NORTH / Y",12,h-32);x.fillStyle="#65e0d4";x.fillText("EAST / X",12,h-17);}
-async function compareFiles(){
- const ma=$("missionA").files[0],ra=$("receiverA").files[0],ea=$("eventsA").files[0],
-       mb=$("missionB").files[0],rb=$("receiverB").files[0],eb=$("eventsB").files[0];
+async function compareFiles(fileOverride=null){
+ const pick=(key,id)=>fileOverride&&Object.prototype.hasOwnProperty.call(fileOverride,key)?fileOverride[key]:$(id).files[0];
+ const ma=pick("missionA","missionA"),ra=pick("receiverA","receiverA"),ea=pick("eventsA","eventsA"),
+       mb=pick("missionB","missionB"),rb=pick("receiverB","receiverB"),eb=pick("eventsB","eventsB");
+ const manifestA=fileOverride&&fileOverride.manifestA||null,manifestB=fileOverride&&fileOverride.manifestB||null;
  if(!ma||!ra){toast("Route A requires the Pi .rcm mission and the matching receiver CSV.",true);return;}
  if((mb&&!rb)||(!mb&&rb)){toast("Route B needs both its Pi mission and receiver CSV.",true);return;}
  if(eb&&(!mb||!rb)){toast("Route B sidecar requires a matching Route B mission and receiver CSV.",true);return;}
  $("compareBtn").disabled=true;$("compareStatus").textContent="Reading RCM, receiver CSV and optional event sidecars locally...";
  try{
-  const [am,ar,ae]=await Promise.all([parseRcm(ma),ra.text().then(parseRxCsv),parsePiSidecar(ea)]);
+  const [am,ar,ae,amanifest]=await Promise.all([parseRcm(ma),ra.text().then(parseRxCsv),parsePiSidecar(ea),parsePiManifest(manifestA)]);
   am.fileName=ma.name;ar.fileName=ra.name;
-  S.routeA=makeBins(alignMission(am,ar,ae),Number($("segmentLength").value));S.routeB=null;
+  if(amanifest&&ae&&amanifest.session_id!==ae.sessionId)throw Error("Pi manifest and event sidecar session IDs do not match.");
+  const alignedA=makeBins(alignMission(am,ar,ae),Number($("segmentLength").value));
+  alignedA.manifest=amanifest;alignedA.manifestFile=manifestA?manifestA.name:null;
+  S.routeA=alignedA;S.routeB=null;
   if(mb&&rb){
-   const [bm,br,be]=await Promise.all([parseRcm(mb),rb.text().then(parseRxCsv),parsePiSidecar(eb)]);
+   const [bm,br,be,bmanifest]=await Promise.all([parseRcm(mb),rb.text().then(parseRxCsv),parsePiSidecar(eb),parsePiManifest(manifestB)]);
    bm.fileName=mb.name;br.fileName=rb.name;
-   S.routeB=makeBins(alignMission(bm,br,be),Number($("segmentLength").value));
+   if(bmanifest&&be&&bmanifest.session_id!==be.sessionId)throw Error("Route B manifest and event sidecar session IDs do not match.");
+   const alignedB=makeBins(alignMission(bm,br,be),Number($("segmentLength").value));
+   alignedB.manifest=bmanifest;alignedB.manifestFile=manifestB?manifestB.name:null;
+   S.routeB=alignedB;
   }
   if(S.compareLayer)S.compareLayer.clearLayers();drawCompared(S.routeA,0);if(S.routeB)drawCompared(S.routeB,1);
   const bounds=[];[S.routeA,S.routeB].filter(Boolean).forEach(m=>m.records.forEach(r=>{if(validGps(r.latitude,r.longitude))bounds.push([r.latitude,r.longitude]);}));
@@ -722,7 +780,9 @@ function exportMergedSession(){
    sidecar_present:!!route.sidecarLoaded,
    timestamp_basis:route.sidecarLoaded?"Pi JSONL sample_recorded timestamps":"sample index only; RCM contains no per-sample timestamp",
    alignment_warning:route.alignmentWarning||null,
-   radio_config:route.radioConfig||null
+   radio_config:route.radioConfig||null,
+   pi_manifest:route.manifest||null,
+   pi_manifest_file:route.manifestFile||null
   },
   summary,
   records,
