@@ -280,15 +280,25 @@ def create_app(
             return {"paired": False, "reason": "waiting_for_encrypted_lora_beacon"}
         now = time.time()
         valid_until = float(descriptor.get("valid_until", 0))
-        if now - received_at > 45 or valid_until <= now:
+        worker = worker_holder.get("worker")
+        receiver_status = worker.status() if worker else {}
+        capture_active = bool(receiver_status.get("capture_active"))
+        beacon_fresh = now - received_at <= 45 and valid_until > now
+        # The Pi radio is intentionally paused from beaconing while runner.py owns the
+        # transmitter. Keep the last encrypted pairing credentials available to Stop
+        # while the receiver CSV proves that this exact paired session is active.
+        if not beacon_fresh and not capture_active:
             return {
                 "paired": False,
                 "reason": "pairing_beacon_stale",
                 "device_id": descriptor.get("device_id"),
                 "last_seen_at": received_at,
+                "capture_active": False,
             }
         return {
             "paired": True,
+            "beacon_fresh": beacon_fresh,
+            "capture_active": capture_active,
             "tunnel_url": descriptor["tunnel_url"],
             "control_token": descriptor["control_token"],
             "device_id": descriptor["device_id"],
