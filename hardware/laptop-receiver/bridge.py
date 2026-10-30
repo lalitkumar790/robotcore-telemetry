@@ -19,7 +19,7 @@ from typing import Any
 
 from fastapi import Body, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import uvicorn
@@ -278,6 +278,56 @@ def create_app(
         if requested and status.get("field_session_id") and requested != status.get("field_session_id"):
             raise HTTPException(status_code=409, detail="Requested session does not match the active receiver session.")
         return worker.end_field_session()
+
+    @app.get("/api/session/files")
+    def session_files(
+        authorization: str | None = Header(default=None),
+        x_robotcore_token: str | None = Header(default=None),
+    ) -> dict:
+        require_control_token(authorization, x_robotcore_token)
+        worker = worker_holder.get("worker")
+        if worker is None:
+            raise HTTPException(status_code=503, detail="Receiver worker is not running.")
+        status = worker.status()
+        if status.get("capture_active"):
+            raise HTTPException(status_code=409, detail="Stop the laptop receiver capture before syncing its CSV.")
+        path = worker.log_path
+        if not status.get("field_session_id") or path is None or not path.is_file():
+            raise HTTPException(status_code=404, detail="No completed receiver CSV is available.")
+        return {
+            "session_id": status["field_session_id"],
+            "experiment_id": status.get("experiment_id"),
+            "files": [{
+                "name": path.name,
+                "size_bytes": path.stat().st_size,
+                "kind": "receiver",
+                "download": "/api/session/files/" + path.name,
+            }],
+        }
+
+    @app.get("/api/session/files/{filename}")
+    def download_session_file(
+        filename: str,
+        authorization: str | None = Header(default=None),
+        x_robotcore_token: str | None = Header(default=None),
+    ) -> FileResponse:
+        require_control_token(authorization, x_robotcore_token)
+        worker = worker_holder.get("worker")
+        if worker is None:
+            raise HTTPException(status_code=503, detail="Receiver worker is not running.")
+        status = worker.status()
+        path = worker.log_path
+        if status.get("capture_active"):
+            raise HTTPException(status_code=409, detail="Stop the laptop receiver capture before downloading its CSV.")
+        if (
+            not status.get("field_session_id")
+            or path is None
+            or Path(filename).name != filename
+            or filename != path.name
+            or not path.is_file()
+        ):
+            raise HTTPException(status_code=404, detail="Receiver session file not found.")
+        return FileResponse(path, media_type="text/csv", filename=path.name)
 
     @app.get("/api/pairing")
     def api_pairing(
