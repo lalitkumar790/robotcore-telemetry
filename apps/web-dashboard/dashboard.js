@@ -314,13 +314,14 @@ function parseCsv(text){const rows=[];let row=[],field="",q=false;text=text.repl
 function norm(v){return String(v||"").trim().toLowerCase().replace(/[^a-z0-9]+/g,"");}
 function col(h,choices,includes){const a=h.map(norm);for(const c of choices){const i=a.indexOf(norm(c));if(i>=0)return i;}return includes?a.findIndex(v=>v.includes(includes)):-1;}
 function num(v){if(v==null||String(v).trim()==="")return null;const n=Number(String(v).replace(/,/g,"").trim());return Number.isFinite(n)?n:null;}
+function finiteOrNull(v){if(v==null||String(v).trim()==="")return null;const n=Number(v);return Number.isFinite(n)?n:null;}
 function parseRxCsv(text){
  const rows=parseCsv(text);if(rows.length<2)throw Error("Receiver CSV has no data rows.");
  const h=rows[0].map(v=>String(v).trim()),c={
   seq:col(h,["Sequence","Seq","Packet Sequence"]),lat:col(h,["Latitude","Lat"]),lon:col(h,["Longitude","Lon","Lng"]),
   rssi:col(h,["RSSI (dBm)","RSSI dBm","RSSI"],"rssi"),snr:col(h,["SNR (dB)","SNR dB","SNR"],"snr"),
   time:col(h,["RX Time UTC","PC Timestamp","Timestamp","Laptop receive timestamp","Receive Timestamp"],"timestamp"),
-  epoch:col(h,["RX Epoch ms","Receive Epoch ms","Epoch ms"]),speed:col(h,["Speed (km/h)","Speed km/h","Speed"],"speed"),
+  epoch:col(h,["RX Epoch ms","Receive Epoch ms","Epoch ms"]),lostBefore:col(h,["Lost Before"]),speed:col(h,["Speed (km/h)","Speed km/h","Speed"],"speed"),
   experiment:col(h,["Experiment ID"]),session:col(h,["RX Session ID"]),fieldSession:col(h,["Field Session ID"])
  };
  if(c.seq<0)throw Error("Receiver CSV needs a Sequence column for Pi mission matching.");
@@ -330,6 +331,7 @@ function parseRxCsv(text){
   rssi:c.rssi>=0?num(r[c.rssi]):null,snr:c.snr>=0?num(r[c.snr]):null,
   receiveTime:c.time>=0?String(r[c.time]||""):null,
   receiveUnixMs:c.epoch>=0?num(r[c.epoch]):null,
+  lostBefore:c.lostBefore>=0?num(r[c.lostBefore]):null,
   speed:c.speed>=0?num(r[c.speed]):null,sourceRow:i+2
  })).filter(r=>r.sequence!=null);
  if(!rec.length)throw Error("No numeric packet sequence values found.");
@@ -355,10 +357,10 @@ async function parsePiSidecar(file){
   if(event.event==="sample_recorded"&&Number.isFinite(seq)){
    const item={
     sequence:seq,gpsValid:event.gps_valid===true,imuConnected:event.imu_connected===true,
-    imuAgeS:Number.isFinite(Number(event.imu_age_s))?Number(event.imu_age_s):null,
+    imuAgeS:finiteOrNull(event.imu_age_s),
     imuError:event.imu_error?String(event.imu_error):null,
     txOutcome:"pending",txError:null,txResponse:"",
-    sampleTimeUnix:Number.isFinite(timestampUnix)?timestampUnix:null,
+    sampleTimeUnix:finiteOrNull(event.timestamp_unix),
     sampleTimeUtc:event.timestamp_utc?String(event.timestamp_utc):null,
     eventId:event.event_id
    };
@@ -370,7 +372,7 @@ async function parsePiSidecar(file){
     timestampUtc:event.timestamp_utc?String(event.timestamp_utc):null,
     gpsValid:event.gps_valid===true,
     imuConnected:!!event.imu_connected,
-    imuAgeS:Number.isFinite(Number(event.imu_age_s))?Number(event.imu_age_s):null,
+    imuAgeS:finiteOrNull(event.imu_age_s),
     gpsError:event.gps_error?String(event.gps_error):null,
     txOutcome:String(event.tx_outcome||"not_attempted")
    });
@@ -401,7 +403,10 @@ function alignMission(m,rx,sidecar){
   if(priorRx!=null){const g=gapInfo(priorRx,rec.sequence);if(g.duplicate){duplicateRx++;return;}}
   const candidates=indices.get(rec.sequence)||[],idx=candidates.find(i=>i>cursor);
   if(idx==null){unmatched++;priorRx=rec.sequence;return;}
-  const tx=m.records[idx];tx.received=true;tx.rssi=rec.rssi;tx.snr=rec.snr;tx.receiveTime=rec.receiveTime;matched++;cursor=idx;priorRx=rec.sequence;
+  const tx=m.records[idx];
+  tx.received=true;tx.rssi=rec.rssi;tx.snr=rec.snr;
+  tx.receiveTime=rec.receiveTime;tx.receiveUnixMs=rec.receiveUnixMs;tx.lostBefore=rec.lostBefore;
+  matched++;cursor=idx;priorRx=rec.sequence;
  });
  if(sidecar){
   m.records.forEach(tx=>{
@@ -576,7 +581,7 @@ function replayRender(){
  $("replaySnr").textContent=received&&Number.isFinite(r.snr)?"SNR "+r.snr+" dB":"SNR —";
  $("replayCoords").textContent=validGps(r.latitude,r.longitude)?r.latitude.toFixed(6)+", "+r.longitude.toFixed(6):"No valid GPS";
  $("replayDistance").textContent=Number.isFinite(r.distanceM)?"Distance "+r.distanceM.toFixed(1)+" m":"Distance unavailable";
- $("replayImuHealth").textContent=r.sidecarMatched?(r.imuConnected?"Fresh at TX sample":"Missing / stale"):"Unverified";
+ $("replayImuHealth").textContent=r.sidecarMatched?(r.imuConnected?"Connected at TX sample":"Disconnected at TX sample"):"Unverified";
  $("replayImuAge").textContent=Number.isFinite(r.imuAgeS)?"Sensor sample age "+r.imuAgeS.toFixed(3)+" s":(r.sidecarMatched?"Sensor age unavailable":"No Pi event sidecar");
  $("replayAttitude").textContent=[r.roll,r.pitch,r.yaw].every(Number.isFinite)?r.roll.toFixed(1)+"° / "+r.pitch.toFixed(1)+"° / "+r.yaw.toFixed(1)+"°":"—";
  $("replayMotion").textContent=[r.ax,r.ay,r.az].every(Number.isFinite)?"Accel "+r.ax.toFixed(2)+", "+r.ay.toFixed(2)+", "+r.az.toFixed(2)+" g":"Accel / gyro unavailable";
@@ -655,7 +660,7 @@ function exportMergedSession(){
     speed_kmh:Number.isFinite(r.speed)?r.speed:null
    },
    imu:{
-    health_verified:!!r.sidecarMatched,
+    health_verified:!!r.sidecarMatched&&typeof r.imuConnected==="boolean",
     connected_at_sample:r.sidecarMatched?!!r.imuConnected:null,
     sample_age_s:Number.isFinite(r.imuAgeS)?r.imuAgeS:null,
     error:r.imuError||null,
@@ -668,7 +673,7 @@ function exportMergedSession(){
     roll_deg:imuVerified&&Number.isFinite(r.roll)?r.roll:null,
     pitch_deg:imuVerified&&Number.isFinite(r.pitch)?r.pitch:null,
     yaw_deg:imuVerified&&Number.isFinite(r.yaw)?r.yaw:null,
-    wire_values_unverified:!r.sidecarMatched
+    wire_values_unverified:!imuVerified
    },
    transmitter:{
     tx_outcome:r.txOutcome||"unknown",
