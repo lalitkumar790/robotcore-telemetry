@@ -351,6 +351,62 @@ def stop_session(authorization: str | None = Header(default=None)) -> dict[str, 
     return controller.stop()
 
 
+@app.get("/api/session/files")
+def session_files(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    if not _authorized(authorization):
+        raise HTTPException(status_code=401, detail="Field-console token is missing or invalid.")
+    status = controller.status()
+    if status.get("state") == "running":
+        raise HTTPException(status_code=409, detail="Stop the Pi mission before syncing its files.")
+    with controller.lock:
+        session_id = controller.session_id
+        experiment_id = controller.experiment_id
+    if not session_id:
+        raise HTTPException(status_code=404, detail="No completed Pi session is available.")
+    needle = _safe_name(session_id)
+    allowed_suffixes = (".rcm", ".events.jsonl", ".manifest.json")
+    files = []
+    for path in sorted(MISSIONS_PATH.glob("*" + needle + "*")):
+        if not path.is_file() or not path.name.endswith(allowed_suffixes):
+            continue
+        files.append({
+            "name": path.name,
+            "size_bytes": path.stat().st_size,
+            "kind": "mission" if path.name.endswith(".rcm") else "events" if path.name.endswith(".events.jsonl") else "manifest",
+            "download": "/api/session/files/" + path.name,
+        })
+    if not any(item["kind"] == "mission" for item in files):
+        raise HTTPException(status_code=404, detail="Completed session mission file was not found.")
+    return {
+        "session_id": session_id,
+        "experiment_id": experiment_id,
+        "files": files,
+    }
+
+
+@app.get("/api/session/files/{filename}")
+def download_session_file(
+    filename: str,
+    authorization: str | None = Header(default=None),
+) -> FileResponse:
+    if not _authorized(authorization):
+        raise HTTPException(status_code=401, detail="Field-console token is missing or invalid.")
+    with controller.lock:
+        session_id = controller.session_id
+        running = controller.process is not None and controller.process.poll() is None
+    if running:
+        raise HTTPException(status_code=409, detail="Stop the Pi mission before downloading session files.")
+    if not session_id or Path(filename).name != filename or _safe_name(filename) != filename:
+        raise HTTPException(status_code=404, detail="Session file not found.")
+    if not filename.endswith((".rcm", ".events.jsonl", ".manifest.json")) or _safe_name(session_id) not in filename:
+        raise HTTPException(status_code=404, detail="Session file not found.")
+    path = (MISSIONS_PATH / filename).resolve()
+    if path.parent != MISSIONS_PATH.resolve() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Session file not found.")
+    media_type = "application/octet-stream" if filename.endswith(".rcm") else "application/json"
+    return FileResponse(path, media_type=media_type, filename=filename)
+
+
 @app.on_event("shutdown")
 def shutdown_event() -> None:
     try:
