@@ -1,12 +1,8 @@
-# RobotCore Laptop Receiver Bridge
+# RobotCore Laptop Receiver and Local Field Dashboard
 
-This is the separate laptop-side receiver process for a field walk. It owns the LoRa-E5 receiver serial port, decodes RTPv1/RTPv2 and validates CRC, saves an append-only receiver CSV, and broadcasts only read-only telemetry over an authenticated WebSocket to the hosted dashboard.
+The laptop owns the LoRa-E5 receive serial port, validates RTPv2 CRC/sequence, logs received telemetry, and receives encrypted Pi pairing beacons. In managed-session mode it writes a receiver CSV only while a paired capture is active. It also serves the dashboard locally so the dashboard can discover and control the Pi without a laptop Cloudflare tunnel.
 
-## Do not open the same COM port twice
-
-Stop the old PySide ground-station receiver or any other serial process on the LoRa-E5 receiver first. This bridge opens the port exclusively. The laptop continues recording even when your phone disconnects or moves out of mobile coverage.
-
-## Install and start on Windows
+## One-time setup on Windows
 
 From PowerShell in this folder:
 
@@ -14,28 +10,60 @@ From PowerShell in this folder:
     .\.venv\Scripts\Activate.ps1
     py -m pip install --upgrade pip
     pip install -r requirements.txt
-    py bridge.py --port COM8 --experiment-id MANIT-20261029-A
 
-Replace COM8 with the actual RX port found in Device Manager or `py -c "from receiver import list_ports_text; print(list_ports_text())"`. If the known LoRa-E5 USB ID (10C4:EA60) is uniquely detected, --port is optional.
+The launcher detects the LoRa-E5 by USB ID 10C4:EA60 and re-discovers it after USB/COM changes.
 
-The console prints a per-run bridge token. Keep it private and paste it into the hosted dashboard's Device status panel on your phone.
+## One-time shared pairing-key provisioning
 
-## Expose the local bridge temporarily to your phone
+Run start_field_station.ps1:
 
-Install cloudflared on the laptop, leave the bridge process running, and open a second PowerShell window:
+    .\start_field_station.ps1
 
-    cloudflared tunnel --url http://127.0.0.1:8765
+On first launch only, paste the Base64 256-bit pairing key printed by the Pi install_field_console.sh installer. It is saved in %USERPROFILE%\.robotcore\pairing.key with a restricted file ACL. This key is shared only with the Pi and laptop; do not put it in Git, a URL, the dashboard, or a public issue.
 
-Copy the HTTPS URL ending in trycloudflare.com into the hosted dashboard. The page creates a secure WSS connection to /ws and authenticates with the token. Do not paste the token into the URL. Stop cloudflared when the walk ends; its quick-tunnel hostname is temporary.
+The launcher then starts:
+- the LoRa-E5 receiver bridge on TCP 8765, bound to the laptop's LAN interfaces;
+- managed-session mode, so CSV writing begins only after a Start request;
+- the local dashboard at http://<laptop-ip>:8765/;
+- authenticated APIs for bridge status, pairing discovery and paired start/stop.
 
-The default allowed origin is https://robotcore-telemetry.vercel.app. If you use another Vercel origin, supply it via ROBOTCORE_ALLOWED_ORIGINS or repeated --origin options. The bridge binds to 127.0.0.1 by default; do not bind to 0.0.0.0 for this setup.
+Keep the PowerShell process running during the walk. It prints the per-run bridge token used for the browser bootstrap; the local dashboard receives it in memory and does not save it to Vercel/local storage. Anyone who can access this dashboard on the private LAN can use its controls, so use a trusted private network only.
 
-## Logs
+The laptop does not start cloudflared. The Pi starts its own Quick Tunnel after it discovers internet and sends the URL + a short-lived bearer token to the laptop in an AES-GCM encrypted RCP1 LoRa beacon.
 
-A new receiver CSV is written under logs/ for each run and flushed after each valid packet. Columns include UTC receive time, sequence, protocol, GPS, RSSI/SNR, cumulative receiver stats, PDR and IMU fields with the status unverified for RTPv2. Raw GPS tracks are private and should not be committed to Git.
+## Private-network firewall
 
-## Status semantics
+If the phone cannot reach http://<laptop-ip>:8765/, open PowerShell as Administrator and run:
 
-The bridge reports serial connectivity separately from successful radio-configuration acknowledgement and from actual valid RTP packet reception. A serial port open is not proof of LoRa reception. Packet-loss estimates are inferred from sequence gaps after the first packet; they exclude losses before the first observed sequence and may include local receiver/driver issues.
+    .\setup_field_station_firewall.ps1
 
-RTPv2 does not carry an IMU presence flag, acquisition timestamp, altitude or transmit outcome. The receiver therefore labels on-air IMU fields unverified. Pair this receiver CSV with the Pi .rcm plus its .events.jsonl sidecar after the walk to classify each transmitter sample as received/not-received and inspect Pi-side TX outcome.
+This is a Private-profile-only inbound rule. Do not allow the bridge on Public Wi-Fi or port-forward 8765 to the internet.
+
+## Legacy/manual mode
+
+For isolated receiver debugging, a legacy command can still be used:
+
+    py bridge.py --port COM8 --experiment-id MANIT-20261030-A
+
+To use automatic COM rediscovery, omit --port and do not set ROBOTCORE_RX_PORT. For the new paired workflow, prefer start_field_station.ps1; it applies --host 0.0.0.0 --allow-lan-origins --managed-sessions and the pairing key.
+
+## Session files
+
+Each paired run produces a laptop CSV named:
+
+    receiver_<experiment-id>_<session-id>.csv
+
+The Field Session ID is a column in the CSV. The Pi mission, .events.jsonl sidecar, and .manifest.json include the same ID. Pair the four files in the dashboard's Dual-ended capture section. Session Replay uses Pi-side acquisition timestamps from the JSONL sidecar when available; without it, playback is sample-index based, since RTPv2 RCM packet records have no per-sample timestamp.
+
+## Receiver and pairing status
+
+- serial_connected means Windows opened the selected serial port.
+- radio_configured means the LoRa-E5 configuration command was acknowledged.
+- packets_received counts decoded RTP telemetry packets; RCP1 pairing beacons are not counted as telemetry or corrupt packets.
+- pairing_received counts decrypted/authenticated pairing beacons.
+- pairing_rejected counts beacons that failed decrypt/expiry/descriptor validation.
+- last_pairing_error explains missing key, wrong key, expired or malformed beacons.
+- capture_active means the session CSV is open and being written.
+- last_error reports serial/radio or packet-decoding problems.
+
+A modem TX DONE event is not proof that the laptop received the packet. The merged replay retains sender-side TX outcome and receiver-side receipt separately.
