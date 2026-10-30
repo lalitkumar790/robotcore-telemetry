@@ -47,9 +47,10 @@ In Windows PowerShell:
     cd "$HOME\robotcore-telemetry-field"
     git pull --ff-only origin main
     cd hardware/laptop-receiver
+    py -m venv .venv
     .\start_field_station.ps1
 
-On first launch, the script asks for the one-time Base64 pairing key printed by the Pi installer. Paste it once. The key is saved under:
+On first launch, the script installs any missing Python dependencies and asks for the one-time Base64 pairing key printed by the Pi installer. Paste it once. The key is saved under:
 
     %USERPROFILE%\.robotcore\pairing.key
 
