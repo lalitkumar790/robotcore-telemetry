@@ -72,7 +72,7 @@ The helper creates a TCP 8765 inbound rule for the **Private** Windows network p
 5. Press **Start paired recording**. A shared session ID is created. The Pi opens its .rcm, .events.jsonl, .manifest.json; the laptop opens receiver_<experiment>_<session>.csv.
 6. Wait for valid packet counters to move at the base station, then walk the route.
 7. Press **Stop & save both files**. The Pi is stopped first; the laptop CSV is closed after Pi stop is acknowledged. Preserve all four files together.
-8. Load the matching Pi mission, event sidecar and laptop receiver CSV into Route A. Check the session-ID verification status. Open Session Replay or export the merged JSON.
+8. After Stop, the laptop dashboard automatically downloads the completed Pi .rcm, .events.jsonl, .manifest.json and matching laptop CSV through the authenticated APIs. It verifies that all four artifacts share the same session ID, aligns them by RTP sequence, and prepares Session Replay. Export the merged JSON from the replay panel for archival and later ML work.
 
 USB COM numbers can change. The laptop launcher does not pin COM8; it uses the LoRa-E5 USB ID and retries/re-discovers after a disconnect. A receiver serial open is not the same as successful radio configuration. A TX DONE modem response is not an RX acknowledgement.
 
@@ -82,6 +82,7 @@ USB COM numbers can change. The laptop launcher does not pin COM8; it uses the L
 - Pi .rcm packets do not carry per-sample acquisition timestamps. When the .events.jsonl sidecar is present, replay uses sample_recorded.timestamp_unix. Without it, replay is explicitly sample-index based; it does not invent sample timestamps.
 - Receiver timestamps are the laptop's packet-receive time, not Pi transmit time. Keep both clocks and time fields distinct.
 - The sidecar records skipped GPS-fix samples. These are included as auxiliary events in the merged export but are not added to the transmitted-packet PDR denominator.
+- The automatic post-run sync uses short-lived Pi authorization held in browser memory. Raw Pi and laptop files remain on their source devices; the browser downloads temporary file blobs for parsing and does not upload them to Vercel. The merged JSON is downloaded only when the user presses Export.
 - RSSI/SNR exist only for received packets. Never fill them for missing packets.
 
 ## Network and tunnel limitations
