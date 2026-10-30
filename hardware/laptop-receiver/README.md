@@ -53,7 +53,7 @@ Each paired run produces a laptop CSV named:
 
     receiver_<experiment-id>_<session-id>.csv
 
-The Field Session ID is a column in the CSV. The Pi mission, .events.jsonl sidecar, and .manifest.json include the same ID. Pair the four files in the dashboard's Dual-ended capture section. Session Replay uses Pi-side acquisition timestamps from the JSONL sidecar when available; without it, playback is sample-index based, since RTPv2 RCM packet records have no per-sample timestamp.
+The Field Session ID is a column in the CSV. The Pi mission, .events.jsonl sidecar, and .manifest.json include the same ID. After Stop, the local dashboard automatically fetches the Pi .rcm, .events.jsonl and .manifest.json plus the matching receiver CSV through authenticated session-file endpoints. It verifies the shared session ID, prepares the dual-ended comparison and starts Session Replay. Session Replay uses Pi-side acquisition timestamps from the JSONL sidecar when available; without it, playback is sample-index based, since RTPv2 RCM packet records have no per-sample timestamp. The dashboard holds temporary File blobs in browser memory and offers a user-triggered merged JSON export; it does not persist raw GPS data to Vercel.
 
 ## Receiver and pairing status
 
