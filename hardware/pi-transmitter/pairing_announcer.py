@@ -79,7 +79,7 @@ class TunnelPairingAnnouncer(threading.Thread):
             token = self.control_token
         return bool(token) and hmac.compare_digest(value, token)
 
-    def pause_for_recording(self, timeout_s: float = 6.0) -> bool:
+    def pause_for_recording(self, timeout_s: float = 15.0) -> bool:
         self.pause_event.set()
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
@@ -301,6 +301,15 @@ class TunnelPairingAnnouncer(threading.Thread):
             )
 
         while not self.stop_event.is_set():
+            if self._pairing_key is None:
+                self._set(
+                    state="pairing_key_missing",
+                    beacon_state="disabled",
+                    tunnel_state="not_started",
+                )
+                self.stop_event.wait(5.0)
+                continue
+
             if self.pause_event.is_set():
                 self._close_radio()
                 self._set(state="recording", beacon_state="paused_for_recording")
@@ -324,11 +333,6 @@ class TunnelPairingAnnouncer(threading.Thread):
                     else:
                         self._set(state="waiting_for_internet")
                 self.stop_event.wait(0.5)
-                continue
-
-            if self._pairing_key is None:
-                self._set(state="pairing_key_missing", beacon_state="disabled")
-                self.stop_event.wait(1.0)
                 continue
 
             if not self._ensure_radio():
