@@ -4,6 +4,9 @@ import argparse
 import asyncio
 import hmac
 import ipaddress
+import json
+import time
+import sys
 import os
 import re
 import secrets
@@ -16,9 +19,13 @@ from typing import Any
 
 from fastapi import Body, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import uvicorn
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+from pairing_protocol import load_pairing_key
 from receiver import ReceiverWorker, select_receiver_port, list_ports_text
 
 RADIO_DEFAULTS = {
@@ -81,6 +88,8 @@ def create_app(
     managed_sessions: bool = False,
     allow_lan_origins: bool = False,
     auto_detect_port: bool = False,
+    pairing_key: bytes | None = None,
+    dashboard_dir: str | None = None,
 ) -> FastAPI:
     radio_config = dict(RADIO_DEFAULTS)
     if radio:
@@ -90,6 +99,8 @@ def create_app(
     loop_holder: dict[str, asyncio.AbstractEventLoop] = {}
     worker_holder: dict[str, ReceiverWorker] = {}
     last_record: dict[str, Any] = {}
+    pairing_state: dict[str, Any] = {"descriptor": None, "received_at": None}
+    pairing_lock = threading.RLock()
 
     async def broadcast(message: dict) -> None:
         async with clients_lock:
@@ -117,6 +128,11 @@ def create_app(
             except RuntimeError:
                 pass
 
+    def pairing_callback(descriptor: dict) -> None:
+        with pairing_lock:
+            pairing_state["descriptor"] = dict(descriptor)
+            pairing_state["received_at"] = time.time()
+
     def status_callback() -> None:
         loop = loop_holder.get("loop")
         if loop and not loop.is_closed():
@@ -137,6 +153,12 @@ def create_app(
             "read_only": True,
             "session_control_api": True,
             "managed_sessions": managed_sessions,
+            "pairing_key_configured": pairing_key is not None,
+            "pairing": {
+                "received": bool(pairing_state["descriptor"]),
+                "device_id": pairing_state["descriptor"].get("device_id") if pairing_state["descriptor"] else None,
+                "last_seen_at": pairing_state["received_at"],
+            },
             "radio_config": radio_config,
         })
         return status
@@ -158,6 +180,8 @@ def create_app(
             experiment_id=experiment_id,
             managed_sessions=managed_sessions,
             auto_detect_port=auto_detect_port,
+            on_pairing=pairing_callback,
+            pairing_key=pairing_key,
         )
         worker_holder["worker"] = worker
         worker.start()
@@ -243,6 +267,48 @@ def create_app(
             raise HTTPException(status_code=409, detail="Requested session does not match the active receiver session.")
         return worker.end_field_session()
 
+    @app.get("/api/pairing")
+    def api_pairing(
+        authorization: str | None = Header(default=None),
+        x_robotcore_token: str | None = Header(default=None),
+    ) -> dict:
+        require_control_token(authorization, x_robotcore_token)
+        with pairing_lock:
+            descriptor = dict(pairing_state["descriptor"] or {})
+            received_at = pairing_state["received_at"]
+        if not descriptor or received_at is None:
+            return {"paired": False, "reason": "waiting_for_encrypted_lora_beacon"}
+        now = time.time()
+        valid_until = float(descriptor.get("valid_until", 0))
+        if now - received_at > 45 or valid_until <= now:
+            return {
+                "paired": False,
+                "reason": "pairing_beacon_stale",
+                "device_id": descriptor.get("device_id"),
+                "last_seen_at": received_at,
+            }
+        return {
+            "paired": True,
+            "tunnel_url": descriptor["tunnel_url"],
+            "control_token": descriptor["control_token"],
+            "device_id": descriptor["device_id"],
+            "issued_at": descriptor["issued_at"],
+            "valid_until": descriptor["valid_until"],
+            "last_seen_at": received_at,
+        }
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def local_dashboard() -> HTMLResponse:
+        directory = Path(dashboard_dir).resolve() if dashboard_dir else Path(__file__).resolve().parents[2] / "apps" / "web-dashboard"
+        index = directory / "index.html"
+        if not index.is_file():
+            return HTMLResponse("<h1>RobotCore local dashboard files were not found.</h1>", status_code=503)
+        html = index.read_text(encoding="utf-8")
+        bootstrap = "<script>window.ROBOTCORE_FIELD_BOOTSTRAP=" + json.dumps(
+            {"bridgeToken": token}, separators=(",", ":")
+        ) + ";</script>"
+        return HTMLResponse(html.replace("</head>", bootstrap + "</head>", 1))
+
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):
         origin = (ws.headers.get("origin") or "").rstrip("/")
@@ -282,6 +348,9 @@ def create_app(
                 async with clients_lock:
                     clients.discard(ws)
 
+    static_directory = Path(dashboard_dir).resolve() if dashboard_dir else Path(__file__).resolve().parents[2] / "apps" / "web-dashboard"
+    if static_directory.is_dir():
+        app.mount("/", StaticFiles(directory=str(static_directory), html=True), name="dashboard-assets")
     return app
 
 
@@ -291,6 +360,8 @@ def parse_args():
     parser.add_argument("--host", default="127.0.0.1", help="bind address; use 0.0.0.0 only for an authenticated private-LAN setup")
     parser.add_argument("--managed-sessions", action="store_true", help="only write receiver CSV while a field session is active; start/stop via authenticated API")
     parser.add_argument("--allow-lan-origins", action="store_true", help="allow HTTP origins on private LAN IPs for the local Pi-served console")
+    parser.add_argument("--pairing-key-file", default=os.getenv("ROBOTCORE_PAIRING_KEY_FILE", ""), help="shared 32-byte AES-GCM LoRa pairing key file")
+    parser.add_argument("--dashboard-dir", default=os.getenv("ROBOTCORE_DASHBOARD_DIR", ""), help="dashboard static assets to serve from the local field station")
     parser.add_argument("--listen-port", type=int, default=8765)
     parser.add_argument("--logs", default=os.getenv("ROBOTCORE_RX_LOG_DIR", "logs"))
     parser.add_argument("--experiment-id", default=os.getenv("ROBOTCORE_EXPERIMENT_ID", "UNLABELLED"))
@@ -309,6 +380,13 @@ def main() -> None:
         raise SystemExit(2)
     os.environ["ROBOTCORE_EXPERIMENT_ID"] = args.experiment_id
     token = os.getenv("ROBOTCORE_BRIDGE_TOKEN", "").strip() or secrets.token_urlsafe(32)
+    pairing_key = None
+    pairing_key_path = args.pairing_key_file.strip()
+    if pairing_key_path:
+        try:
+            pairing_key = load_pairing_key(pairing_key_path)
+        except Exception as error:
+            print(f"[PAIR] Encrypted pairing disabled: {error}", flush=True)
     origins = set(x.rstrip("/") for x in args.origin if x.strip())
     env_origins = os.getenv("ROBOTCORE_ALLOWED_ORIGINS", "https://robotcore-telemetry.vercel.app")
     origins.update(x.strip().rstrip("/") for x in env_origins.split(",") if x.strip())
@@ -325,6 +403,8 @@ def main() -> None:
             print(f"[RX] Private-LAN API: http://{address}:{args.listen_port}/api/status")
     print(f"[RX] Bridge token (copy into the local Field Console; do not share): {token}")
     print(f"[RX] Session mode: {'dashboard-managed' if args.managed_sessions else 'legacy always-log'}")
+    print(f"[PAIR] Encrypted LoRa pairing: {'enabled' if pairing_key is not None else 'not provisioned'}")
+    print(f"[UI] Local dashboard: http://<LAPTOP-IP>:{args.listen_port}/")
     print("[SECURITY] Token is generated for this run and stays in memory. Session start/stop API requests require it.")
     print("[SECURITY] Stop any desktop GUI/receiver process that is using this same serial port before continuing.")
     print("=" * 72, flush=True)
@@ -334,6 +414,8 @@ def main() -> None:
         managed_sessions=args.managed_sessions,
         allow_lan_origins=args.allow_lan_origins,
         auto_detect_port=not args.port and not os.getenv("ROBOTCORE_RX_PORT", "").strip(),
+        pairing_key=pairing_key,
+        dashboard_dir=args.dashboard_dir or None,
     )
     uvicorn.run(app, host=args.host, port=args.listen_port, log_level="info" if args.allow_lan_origins else "warning", access_log=False)
 
