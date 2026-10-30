@@ -179,11 +179,13 @@ function fieldRender(){
   }
  }
  const pairingStatus=rx.pairing||{};
- $("fieldReceiverStatus").textContent="Laptop RX: "+(rx.serial_connected?(rx.radio_configured?"radio configured":"serial open · radio unverified"):"disconnected")+(rx.capture_active?" · recording":"")+(pairingStatus.received?" · beacon from "+(pairingStatus.device_id||"Pi"):" · waiting for LoRa beacon");
+ const piStatusBeacon=rx.pi_status_beacon||{};
+ $("fieldReceiverStatus").textContent="Laptop RX: "+(rx.serial_connected?(rx.radio_configured?"radio configured":"serial open · radio unverified"):"disconnected")+(rx.capture_active?" · recording":"")+(pairingStatus.received?" · paired with "+(pairingStatus.device_id||"Pi"):(piStatusBeacon.status&& !piStatusBeacon.stale?" · Pi health beacon received":" · waiting for Pi LoRa beacon"));
  const connection=pi.connection||{};
  $("fieldPiStatus").textContent=pi.connection
   ?"Pi internet: "+(connection.internet_connected?"online":"offline")+" · tunnel: "+(connection.tunnel_state||"unknown")+" · "+(pi.state||"unknown")+(pi.stage?" · "+pi.stage:"")
-  :"Pi: waiting for encrypted LoRa pairing beacon";
+  :f.piBeaconStatus?"Pi internet: "+(f.piBeaconStatus.internet_connected?"online":"offline")+" · tunnel: "+(f.piBeaconStatus.tunnel_state||"unknown")+" · "+(f.piBeaconStatus.state||"checking")
+  :"Pi: waiting for encrypted LoRa health beacon";
  if(connection.last_error&&connection.tunnel_state!=="ready")$("fieldPairMessage").textContent="Pi connection detail: "+connection.last_error;
  if(f.sessionId) $("fieldSessionIdentity").textContent="Session: "+f.sessionId+(f.experimentId?" · "+f.experimentId:"");
  const files=[];
