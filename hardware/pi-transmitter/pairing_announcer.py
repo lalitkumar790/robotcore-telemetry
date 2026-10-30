@@ -15,7 +15,7 @@ from typing import Any
 
 from config import RadioConfig
 from device_discovery import select_serial_port
-from pairing_protocol import encode_pairing_beacon, load_pairing_key
+from pairing_protocol import encode_pairing_beacon, encode_status_beacon, load_pairing_key
 from radio import LoRaE5
 
 URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com", re.IGNORECASE)
@@ -49,8 +49,10 @@ class TunnelPairingAnnouncer(threading.Thread):
         self._cloudflared = os.getenv("ROBOTCORE_CLOUDFLARED_BIN", "cloudflared").strip() or "cloudflared"
         self._probe_interval = max(5.0, float(os.getenv("ROBOTCORE_INTERNET_PROBE_INTERVAL", "10")))
         self._beacon_interval = max(5.0, float(os.getenv("ROBOTCORE_PAIRING_BEACON_INTERVAL", "12")))
+        self._status_beacon_interval = max(5.0, float(os.getenv("ROBOTCORE_STATUS_BEACON_INTERVAL", "8")))
         self._last_probe = 0.0
         self._last_beacon = 0.0
+        self._last_status_beacon = 0.0
         self._last_radio_retry = 0.0
 
     def status(self) -> dict[str, Any]:
@@ -166,6 +168,7 @@ class TunnelPairingAnnouncer(threading.Thread):
         )
         self._reader.start()
         self._set(tunnel_state="connecting", state="connecting_tunnel", tunnel_url=None, control_token=self._stable_control_token, last_error=None)
+        self._send_status_beacon()
 
         deadline = time.monotonic() + 60.0
         while not self.stop_event.is_set() and time.monotonic() < deadline:
@@ -257,6 +260,38 @@ class TunnelPairingAnnouncer(threading.Thread):
             )
             return False
 
+    def _send_status_beacon(self) -> None:
+        with self.lock:
+            radio = self._radio
+            key = self._pairing_key
+            status = {
+                "device_id": self.device_id,
+                "state": self.state,
+                "internet_connected": bool(self.internet_ok),
+                "tunnel_state": self.tunnel_state,
+                "last_error": self.last_error or "",
+            }
+        if radio is None or key is None:
+            return
+        now = int(time.time())
+        status["issued_at"] = now
+        status["valid_until"] = now + 30
+        try:
+            packet = encode_status_beacon(status, key)
+            outcome, response = radio.transmit(packet, timeout_s=8.0)
+            self._set(
+                last_beacon_at=time.time(),
+                last_beacon_outcome=outcome,
+                beacon_state="status_announced" if outcome == "confirmed" else "status_retrying",
+                last_error=None if outcome == "confirmed" else (self.last_error or "LoRa status beacon TX " + response[-200:]),
+            )
+        except Exception as exc:
+            self._set(
+                beacon_state="status_retrying",
+                last_error=f"LoRa status beacon: {type(exc).__name__}: {exc}",
+            )
+            self._close_radio()
+
     def _send_beacon(self) -> None:
         with self.lock:
             radio = self._radio
@@ -322,8 +357,12 @@ class TunnelPairingAnnouncer(threading.Thread):
                 self._stop_tunnel()
                 self._set(state="waiting_for_internet", tunnel_state="exited", last_error=f"cloudflared exited with code {code}.")
 
+            if not self._ensure_radio():
+                self.stop_event.wait(3.0)
+                continue
+
+            now = time.monotonic()
             if self.tunnel_url is None:
-                now = time.monotonic()
                 if now - self._last_probe >= self._probe_interval:
                     self._last_probe = now
                     self._set(state="checking_internet", tunnel_state="waiting_for_internet")
@@ -332,15 +371,13 @@ class TunnelPairingAnnouncer(threading.Thread):
                     if online:
                         self._start_tunnel()
                     else:
-                        self._set(state="waiting_for_internet")
+                        self._set(state="waiting_for_internet", tunnel_state="waiting_for_internet")
+                if self.tunnel_url is None and now - self._last_status_beacon >= self._status_beacon_interval:
+                    self._last_status_beacon = now
+                    self._send_status_beacon()
                 self.stop_event.wait(0.5)
                 continue
 
-            if not self._ensure_radio():
-                self.stop_event.wait(3.0)
-                continue
-
-            now = time.monotonic()
             if now - self._last_beacon >= self._beacon_interval:
                 self._last_beacon = now
                 self._send_beacon()
