@@ -77,7 +77,7 @@ def validate_descriptor(value: Any, *, now: float | None = None) -> dict[str, An
 def encode_pairing_beacon(descriptor: dict[str, Any], key: bytes) -> bytes:
     if not isinstance(key, bytes) or len(key) != KEY_BYTES:
         raise PairingError("Pairing key must contain exactly 32 bytes.")
-    normalized = validate_descriptor(descriptor, now=min(float(descriptor.get("i", 0)), time.time()))
+    normalized = validate_descriptor(descriptor)
     payload = json.dumps(
         {
             "v": 1,
