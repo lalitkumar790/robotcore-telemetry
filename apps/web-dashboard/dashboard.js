@@ -241,13 +241,30 @@ async function fieldDownloadBlob(base,path,token){
  }
  return response.blob();
 }
+async function fieldResolvePiSession(pair,sessionId){
+ let current=pair,lastError=null;
+ for(let attempt=0;attempt<18;attempt++){
+  try{
+   const latest=await fieldFetch(location.origin,"/api/pairing",S.field.bridgeToken);
+   if(latest&&latest.paired&&latest.device_id===pair.device_id)current=latest;
+  }catch(_){}
+  try{
+   const index=await fieldFetch(current.tunnel_url,"/api/session/files",current.control_token);
+   if(index.session_id!==sessionId)throw Error("Pi returned a different session ID: "+index.session_id);
+   return{pair:current,index};
+  }catch(error){lastError=error;}
+  if(attempt<17)await delay(2000);
+ }
+ throw Error("Pi session endpoint did not become reachable for artifact sync: "+(lastError?lastError.message:"timeout"));
+}
 async function fieldAutoLoadReplay(pair,sessionId){
- const piBase=pair.tunnel_url,piToken=pair.control_token,rxBase=location.origin,rxToken=S.field.bridgeToken;
+ const rxBase=location.origin,rxToken=S.field.bridgeToken;
  fieldSetMessage("Both recorders are stopped. Syncing Pi mission, sidecar, manifest and laptop CSV into the replay workspace…","");
- const [piIndex,rxIndex]=await Promise.all([
-  fieldFetch(piBase,"/api/session/files",piToken),
+ const [piResolved,rxIndex]=await Promise.all([
+  fieldResolvePiSession(pair,sessionId),
   fieldFetch(rxBase,"/api/session/files",rxToken)
  ]);
+ const piPair=piResolved.pair,piIndex=piResolved.index,piBase=piPair.tunnel_url,piToken=piPair.control_token;
  if(piIndex.session_id!==sessionId||rxIndex.session_id!==sessionId)throw Error("Session ID mismatch while syncing files. Pi="+piIndex.session_id+" · laptop="+rxIndex.session_id+" · expected="+sessionId);
  const mission=piIndex.files.find(x=>x.kind==="mission"),events=piIndex.files.find(x=>x.kind==="events"),manifest=piIndex.files.find(x=>x.kind==="manifest"),receiver=rxIndex.files.find(x=>x.kind==="receiver");
  if(!mission||!events||!manifest||!receiver)throw Error("A required session artifact is missing. Pi mission, events, manifest and laptop CSV are all required.");
