@@ -30,12 +30,20 @@ request and resulting session state. The in-memory helper alone is not durable.
 
 ## Radio scheduling and integration status
 
-RCC1 is the message format and validation primitive; this commit does not yet
-wire it to the serial radio workers or dashboard. The current deployment has a
-Pi transmitter and laptop receiver operating in different roles. A working
-offline control path must implement explicit half-duplex receive/transmit
-windows, stop-and-wait acknowledgements, bounded retries, and a safe timeout
-policy on both ends. Do not treat modem `TX DONE` as proof of reception.
+The Pi-side `LoRaE5.receive_window(timeout_s)` primitive now opens a bounded
+`AT+TEST=RXLRPKT` window, captures packet bytes with RSSI/SNR metadata, and
+issues `AT+TEST=STOP` before returning. `LoRaE5.transmit()` also stops an
+active RX window before TX and enforces the 250-byte payload ceiling. These
+operations follow the LoRa-E5 AT command specification, which defines
+RXLRPKT as continuous receive and TEST=STOP as the stop sub-command.
+
+This is a tested radio-driver primitive, not yet an end-to-end control path:
+the Pi runner does not yet poll windows for RCC1 commands, the announcer does
+not yet accept offline START, and the laptop receiver/dashboard do not yet
+schedule downlink commands or await authenticated ACKs. The next integration
+must add explicit receive windows on both radios, stop-and-wait acknowledgements,
+bounded retries, durable replay counters, and safe timeout policy. Do not treat
+modem `TX DONE` as proof of reception.
 
 The Pi's local mission recorder remains the source of truth. Radio or laptop
 failure must never stop local sampling. Cloudflare pairing remains an optional
