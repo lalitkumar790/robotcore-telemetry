@@ -297,7 +297,7 @@ class TunnelPairingAnnouncer(threading.Thread):
         if radio is None or key is None:
             return
         try:
-            for item in radio.receive_window(timeout_s=0.18):
+            for item in radio.receive_window(timeout_s=0.35):
                 payload = item.get("payload", b"")
                 if not payload.startswith(b"RCC1"):
                     continue
