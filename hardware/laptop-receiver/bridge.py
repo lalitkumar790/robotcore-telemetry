@@ -164,9 +164,9 @@ def create_app(
             "managed_sessions": managed_sessions,
             "pairing_key_configured": pairing_key is not None,
             "pairing": {
-                "received": bool(pairing_state["descriptor"]),
-                "device_id": pairing_state["descriptor"].get("device_id") if pairing_state["descriptor"] else None,
-                "last_seen_at": pairing_state["received_at"],
+                "received": bool(pairing_state["descriptor"] or pi_status_state["status"]),
+                "device_id": (pairing_state["descriptor"] or pi_status_state["status"] or {}).get("device_id"),
+                "last_seen_at": pairing_state["received_at"] or pi_status_state["received_at"],
             },
             "pi_status_beacon": {
                 "status": dict(pi_status_state["status"] or {}),
@@ -201,13 +201,14 @@ def create_app(
             raise HTTPException(status_code=503, detail="Pairing key is not configured on this laptop.")
         with pairing_lock:
             descriptor = dict(pairing_state["descriptor"] or {})
-            seen = pairing_state["received_at"]
+            pi_status = dict(pi_status_state["status"] or {})
+            seen = pairing_state["received_at"] or pi_status_state["received_at"]
         worker = worker_holder.get("worker")
         rx_status = worker.status() if worker else {}
         stale = not seen or time.time() - seen > 90
-        if not descriptor or (stale and (kind == "START" or not rx_status.get("capture_active"))):
-            raise HTTPException(status_code=409, detail="No recent authenticated Pi LoRa beacon. Wait for the Pi to announce itself before starting a session.")
-        device_id = descriptor.get("device_id")
+        device_id = descriptor.get("device_id") or pi_status.get("device_id")
+        if not device_id or (stale and (kind == "START" or not rx_status.get("capture_active"))):
+            raise HTTPException(status_code=409, detail="No recent authenticated Pi LoRa beacon. Wait for an encrypted Pi health beacon before starting a session.")
         if not device_id:
             raise HTTPException(status_code=409, detail="Authenticated Pi beacon has no device ID.")
         request_id = secrets.token_hex(12)
@@ -243,6 +244,8 @@ def create_app(
             raise HTTPException(status_code=502, detail=f"Offline LoRa command failed: {type(exc).__name__}: {exc}") from exc
         if ack.get("kind") != "ACK":
             raise HTTPException(status_code=409, detail={"message": "Pi rejected the offline command.", "ack": ack})
+        if ack.get("device_id") != device_id or ack.get("request_id") != request_id:
+            raise HTTPException(status_code=502, detail="Authenticated ACK did not match the target Pi/request.")
         return {"ok": True, "command": kind, "device_id": device_id, "request_id": request_id, "counter": counter, "modem_tx": tx.get("modem_tx"), "ack": ack}
 
     async def broadcast_status() -> None:
