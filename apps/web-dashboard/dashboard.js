@@ -350,7 +350,7 @@ async function fieldStopPaired(){
   catch(error){
    const receiver=await fieldFetch(location.origin,"/api/status",f.bridgeToken);
    const beacon=receiver.pairing||{};
-   if(mode==="auto"&&beacon.received&&beacon.last_seen_at&&Date.now()/1000-beacon.last_seen_at<180)offline=true;
+   if(mode==="auto"&&beacon.received&&receiver.capture_active)offline=true;
    else throw error;
   }
  }
