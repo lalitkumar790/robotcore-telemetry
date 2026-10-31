@@ -109,9 +109,9 @@ class LoRaE5:
         return packets
 
     def transmit(self, packet: bytes, timeout_s: float = 4.0) -> tuple[str, str]:
-        command = f'AT+TEST=TXLRPKT,"{packet.hex().upper()}"'
         if not isinstance(packet, bytes) or not packet or len(packet) > 250:
             raise ValueError("LoRa packet must contain 1-250 bytes")
+        command = f'AT+TEST=TXLRPKT,"{packet.hex().upper()}"'
         if self._rx_active:
             stopped = self.command("AT+TEST=STOP", timeout_s=1.0, stop_on=("+TEST: STOP", "OK"))
             self._rx_active = False
