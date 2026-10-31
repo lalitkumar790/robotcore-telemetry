@@ -244,8 +244,13 @@ def create_app(
             raise HTTPException(status_code=502, detail=f"Offline LoRa command failed: {type(exc).__name__}: {exc}") from exc
         if ack.get("kind") != "ACK":
             raise HTTPException(status_code=409, detail={"message": "Pi rejected the offline command.", "ack": ack})
-        if ack.get("device_id") != device_id or ack.get("request_id") != request_id:
-            raise HTTPException(status_code=502, detail="Authenticated ACK did not match the target Pi/request.")
+        if (
+            ack.get("device_id") != device_id
+            or ack.get("request_id") != request_id
+            or ack.get("session_id") != (session_id or "STATUS")
+            or ack.get("experiment_id") != experiment_id
+        ):
+            raise HTTPException(status_code=502, detail="Authenticated ACK did not match the target Pi, request, or session.")
         return {"ok": True, "command": kind, "device_id": device_id, "request_id": request_id, "counter": counter, "modem_tx": tx.get("modem_tx"), "ack": ack}
 
     async def broadcast_status() -> None:
