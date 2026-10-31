@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import os
 import time
+import sys
+from pathlib import Path
 
 from config import EXPERIMENT_ID, MISSIONS_DIR, TX_INTERVAL, RadioConfig
 from device_discovery import print_serial_candidates, select_serial_port
@@ -12,6 +14,11 @@ from radio import LoRaE5
 from rtp2 import encode_rtpv2
 from witmotion import WitMotion
 from imu_preflight import wait_for_fresh_imu
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+from pairing_protocol import load_pairing_key
+from offline_control_protocol import OfflineControlError, decode_control_message
+from offline_control_runtime import PersistentControlState
 
 
 def parse_args():
@@ -141,7 +148,67 @@ def main() -> int:
             lora.close()
         return 2
 
+
+    control_key = None
+    control_state = None
+    if lora is not None:
+        try:
+            control_key = load_pairing_key(os.getenv("ROBOTCORE_PAIRING_KEY_FILE", "/etc/robotcore-pairing.key"))
+            state_path = os.getenv("ROBOTCORE_OFFLINE_CONTROL_STATE", str(Path(MISSIONS_DIR) / ".offline-control.json"))
+            control_state = PersistentControlState(state_path)
+        except Exception as error:
+            print(f"[CONTROL] Offline command channel disabled: {error}")
+
     recorder = MissionRecorder(MISSIONS_DIR, EXPERIMENT_ID, radio_config.as_dict(), gps_port, lora_port)
+
+    def poll_offline_control() -> bool:
+        if lora is None or control_key is None or control_state is None:
+            return False
+        try:
+            for item in lora.receive_window(timeout_s=0.15):
+                payload = item.get("payload", b"")
+                if not payload.startswith(b"RCC1"):
+                    continue
+                try:
+                    message = decode_control_message(payload, control_key)
+                except OfflineControlError as error:
+                    recorder.write_event("offline_control_rejected", reason=str(error))
+                    continue
+                expected_device = os.getenv("ROBOTCORE_DEVICE_ID", "").strip()
+                if expected_device and message.get("device_id") != expected_device:
+                    continue
+                if message.get("kind") not in {"STOP", "STATUS", "START"}:
+                    continue
+                decision, cached = control_state.accept(message)
+                if decision == "duplicate":
+                    if cached:
+                        outcome, response = lora.transmit(cached, timeout_s=5.0)
+                        recorder.write_event("offline_control_duplicate_reply", request_id=message["request_id"], tx_outcome=outcome, modem_response=response[-300:])
+                    continue
+                if decision != "new":
+                    recorder.write_event("offline_control_rejected", request_id=message.get("request_id"), reason="stale_or_replayed")
+                    continue
+                kind = message["kind"]
+                if kind == "STOP" and message.get("session_id") == os.getenv("ROBOTCORE_SESSION_ID"):
+                    reply_kind, stop_requested = "ACK", True
+                elif kind == "STATUS":
+                    reply_kind, stop_requested = "ACK", False
+                else:
+                    reply_kind, stop_requested = "NACK", False
+                reply = control_state.reply(message, reply_kind, control_key)
+                outcome, response = lora.transmit(reply, timeout_s=5.0)
+                recorder.write_event(
+                    "offline_control_handled", kind=kind, request_id=message["request_id"],
+                    reply_kind=reply_kind, tx_outcome=outcome, modem_response=response[-300:],
+                )
+                if stop_requested and outcome == "confirmed":
+                    print("[CONTROL] Authenticated offline STOP received; stopping mission cleanly.")
+                    return True
+        except Exception as error:
+            recorder.write_event("offline_control_error", error=str(error))
+            print(f"[CONTROL] Offline command polling error: {error}")
+        return False
+
     if radio_event_type is not None:
         recorder.write_event(radio_event_type, **radio_event_fields)
 
@@ -166,6 +233,8 @@ def main() -> int:
                           f"IMU={'fresh' if imu_connected else 'waiting/stale'}; skip recorded.")
                 if gps.last_error:
                     gps.try_reconnect()
+                if poll_offline_control():
+                    break
                 time.sleep(max(0.0, args.interval - (time.monotonic() - started)))
                 continue
 
@@ -193,6 +262,8 @@ def main() -> int:
             if response:
                 for line in response.splitlines()[-3:]:
                     print("  " + line)
+            if poll_offline_control():
+                break
             time.sleep(max(0.0, args.interval - (time.monotonic() - started)))
     except KeyboardInterrupt:
         print("\n[FIELD] Stopping transmitter and flushing local records...")
