@@ -16,6 +16,8 @@ from typing import Any
 from config import RadioConfig
 from device_discovery import select_serial_port
 from pairing_protocol import encode_pairing_beacon, encode_status_beacon, load_pairing_key
+from offline_control_protocol import OfflineControlError, decode_control_message
+from offline_control_runtime import PersistentControlState
 from radio import LoRaE5
 
 URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com", re.IGNORECASE)
@@ -46,6 +48,10 @@ class TunnelPairingAnnouncer(threading.Thread):
         self._tunnel_output: queue.Queue[str] = queue.Queue()
         self._reader: threading.Thread | None = None
         self._pairing_key: bytes | None = None
+        state_path = os.getenv("ROBOTCORE_OFFLINE_CONTROL_STATE", str(Path(os.getenv("ROBOTCORE_MISSIONS_DIR", "missions")) / ".offline-control.json"))
+        self._control_state = PersistentControlState(state_path)
+        self.control_handler = None
+        self._control_outbox: queue.Queue[bytes] = queue.Queue()
         self._cloudflared = os.getenv("ROBOTCORE_CLOUDFLARED_BIN", "cloudflared").strip() or "cloudflared"
         self._probe_interval = max(5.0, float(os.getenv("ROBOTCORE_INTERNET_PROBE_INTERVAL", "10")))
         self._beacon_interval = max(5.0, float(os.getenv("ROBOTCORE_PAIRING_BEACON_INTERVAL", "12")))
@@ -266,6 +272,71 @@ class TunnelPairingAnnouncer(threading.Thread):
             )
             return False
 
+    def _dispatch_control(self, message: dict[str, Any]) -> None:
+        """Run session operations off the radio thread so START can pause it."""
+        try:
+            if self.control_handler is None:
+                raise RuntimeError("Pi field-session controller is not attached.")
+            self.control_handler(message)
+            reply = self._control_state.reply(message, "ACK", self._pairing_key)
+        except Exception as exc:
+            self._set(last_error=f"Offline {message.get('kind')} failed: {type(exc).__name__}: {exc}")
+            try:
+                reply = self._control_state.reply(message, "NACK", self._pairing_key)
+            except Exception:
+                return
+        self._control_outbox.put(reply)
+
+    def _poll_offline_control(self) -> None:
+        with self.lock:
+            radio, key = self._radio, self._pairing_key
+        if radio is None or key is None:
+            return
+        try:
+            for item in radio.receive_window(timeout_s=0.18):
+                payload = item.get("payload", b"")
+                if not payload.startswith(b"RCC1"):
+                    continue
+                try:
+                    message = decode_control_message(payload, key)
+                except OfflineControlError as exc:
+                    self._set(last_error=f"Rejected offline control packet: {exc}")
+                    continue
+                if message.get("device_id") != self.device_id or message.get("kind") not in {"START", "STOP", "STATUS"}:
+                    continue
+                decision, cached = self._control_state.accept(message)
+                if decision == "duplicate":
+                    if cached:
+                        self._control_outbox.put(cached)
+                    continue
+                if decision != "new":
+                    self._set(last_error="Rejected stale/replayed offline control request.")
+                    continue
+                threading.Thread(
+                    target=self._dispatch_control, args=(message,), daemon=True,
+                    name="RobotCoreOfflineControl",
+                ).start()
+        except Exception as exc:
+            self._set(last_error=f"Offline control RX: {type(exc).__name__}: {exc}")
+            self._close_radio()
+
+    def _flush_control_outbox(self) -> None:
+        with self.lock:
+            radio = self._radio
+        if radio is None:
+            return
+        try:
+            packet = self._control_outbox.get_nowait()
+        except queue.Empty:
+            return
+        try:
+            outcome, response = radio.transmit(packet, timeout_s=5.0)
+            if outcome != "confirmed":
+                self._set(last_error="Offline control ACK modem TX was not confirmed: " + response[-200:])
+        except Exception as exc:
+            self._set(last_error=f"Offline control ACK failed: {type(exc).__name__}: {exc}")
+            self._close_radio()
+
     def _send_status_beacon(self) -> None:
         with self.lock:
             radio = self._radio
@@ -365,6 +436,11 @@ class TunnelPairingAnnouncer(threading.Thread):
 
             if not self._ensure_radio():
                 self.stop_event.wait(3.0)
+                continue
+
+            self._poll_offline_control()
+            self._flush_control_outbox()
+            if self.pause_event.is_set():
                 continue
 
             now = time.monotonic()
