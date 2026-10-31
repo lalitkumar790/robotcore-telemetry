@@ -143,7 +143,11 @@ function fieldUpdateControls(){
  const receiverReady=!!(rx.serial_connected&&rx.radio_configured);
  const piReachable=!!(f.piStatus&&f.pairing);
  const piRunning=pi.state==="running",rxRecording=!!rx.capture_active;
- $("fieldStartBtn").disabled=!(paired&&piReachable&&receiverReady&&!piRunning&&!rxRecording);
+ const mode=$("fieldLinkMode")?$("fieldLinkMode").value:"auto";
+ const beacon=rx.pairing||{},beaconFresh=!!(beacon.received&&beacon.last_seen_at&&Date.now()/1000-beacon.last_seen_at<90);
+ const offlineReady=beaconFresh&&receiverReady&&!rxRecording&&!f.active;
+ const onlineReady=paired&&piReachable&&receiverReady&&!piRunning&&!rxRecording;
+ $("fieldStartBtn").disabled=!(mode==="offline"?offlineReady:mode==="online"?onlineReady:(onlineReady||offlineReady));
  $("fieldStopBtn").disabled=!(piRunning||rxRecording||f.active);
 }
 function fieldRender(){
@@ -287,27 +291,39 @@ async function fieldAutoLoadReplay(pair,sessionId){
 }
 async function fieldStartPaired(){
  const f=S.field;
- if(!f.bridgeToken||!f.pairing)throw Error("No fresh encrypted Pi pairing beacon is available.");
+ if(!f.bridgeToken)throw Error("Laptop bridge token is unavailable.");
+ const mode=$("fieldLinkMode")?$("fieldLinkMode").value:"auto";
  const experimentId=$("fieldExperimentId").value.trim();
  if(!/^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/.test(experimentId))throw Error("Use 3–80 letters, numbers, dots, underscores or dashes for the experiment label.");
- const pairing=await fieldFetch(location.origin,"/api/pairing",f.bridgeToken);
- if(!pairing.paired)throw Error("The Pi pairing beacon is stale. Wait for a new beacon before starting.");
- const [preflight,receiver]=await Promise.all([
-  fieldFetch(pairing.tunnel_url,"/api/preflight",pairing.control_token),
+ const [pairing,receiver]=await Promise.all([
+  fieldFetch(location.origin,"/api/pairing",f.bridgeToken),
   fieldFetch(location.origin,"/api/status",f.bridgeToken)
  ]);
- if(!preflight.ok)throw Error("Pi preflight failed. Check GPS USB, LoRa-E5 TX and WT901BLE68 in the Pi status/log.");
- if(!receiver.serial_connected||!receiver.radio_configured)throw Error("Laptop receiver is not ready. Check USB LoRa-E5 and radio configuration.");
+ const offline=mode==="offline"||(mode==="auto"&&!pairing.paired);
+ if(!receiver.serial_connected||!receiver.radio_configured)throw Error("Laptop receiver is not ready. Check the USB LoRa-E5 and radio configuration.");
  if(receiver.capture_active)throw Error("A laptop CSV capture is already active. Stop and save it before starting another.");
  const sessionId="RC-"+new Date().toISOString().replace(/[-:.TZ]/g,"").slice(0,14)+"-"+Math.random().toString(36).slice(2,7).toUpperCase();
+ if(offline){
+  if(!receiver.pairing||!receiver.pairing.received||!receiver.pairing.last_seen_at||Date.now()/1000-receiver.pairing.last_seen_at>90)throw Error("No recent authenticated Pi LoRa beacon. Wait for the Pi beacon before starting offline.");
+  await fieldFetch(location.origin,"/api/offline/session/start",f.bridgeToken,{method:"POST",body:JSON.stringify({experiment_id:experimentId,session_id:sessionId})});
+  f.active=true;f.sessionId=sessionId;f.experimentId=experimentId;f.offline=true;
+  $("fieldSessionIdentity").textContent="Session: "+sessionId+" · "+experimentId+" · offline LoRa";
+  fieldSetMessage("Offline START was authenticated by the Pi. Laptop capture is active; the Pi is performing its local sensor startup checks. No internet or tunnel is required.","good");
+  toast("Started offline LoRa session.");
+  fieldRender();
+  return;
+ }
+ if(!pairing.paired)throw Error("Online tunnel pairing is unavailable. Select Offline mode if the Pi LoRa beacon is visible.");
+ const preflight=await fieldFetch(pairing.tunnel_url,"/api/preflight",pairing.control_token);
+ if(!preflight.ok)throw Error("Pi preflight failed. Check GPS USB, LoRa-E5 TX and WT901BLE68.");
  let receiverStarted=false;
  try{
   await fieldFetch(location.origin,"/api/session/start",f.bridgeToken,{method:"POST",body:JSON.stringify({experiment_id:experimentId,session_id:sessionId})});
   receiverStarted=true;
   const pi=await fieldFetch(pairing.tunnel_url,"/api/session/start",pairing.control_token,{method:"POST",body:JSON.stringify({experiment_id:experimentId,session_id:sessionId})});
-  f.active=true;f.sessionId=sessionId;f.experimentId=experimentId;f.piStatus=pi;
+  f.active=true;f.sessionId=sessionId;f.experimentId=experimentId;f.piStatus=pi;f.offline=false;
   $("fieldSessionIdentity").textContent="Session: "+sessionId+" · "+experimentId;
-  fieldSetMessage("Paired session started. Wait for the Pi log to say recording and for receiver packet counters to move before walking.","good");
+  fieldSetMessage("Online paired session started. Wait for the Pi log to say recording and for receiver packet counters to move before walking.","good");
   toast("Started synchronized Pi mission and laptop receiver CSV.");
  }catch(error){
   if(receiverStarted){try{await fieldFetch(location.origin,"/api/session/stop",f.bridgeToken,{method:"POST",body:JSON.stringify({session_id:sessionId})});}catch(_){}}
@@ -317,16 +333,26 @@ async function fieldStartPaired(){
 }
 async function fieldStopPaired(){
  const f=S.field,pair=f.pairing,sessionId=f.sessionId;
- if(!f.bridgeToken||!pair)throw Error("The paired Pi endpoint is unavailable. Reconnect to the Pi tunnel before stopping.");
- fieldSetMessage("Stopping the Pi transmitter first. The laptop CSV stays open until Pi stop is confirmed.","");
+ if(!f.bridgeToken)throw Error("Laptop bridge token is unavailable.");
+ const mode=$("fieldLinkMode")?$("fieldLinkMode").value:"auto";
+ const offline=!!f.offline||mode==="offline"||!pair;
+ fieldSetMessage("Sending authenticated STOP to the Pi. The laptop CSV remains open until the Pi ACKs.","");
+ if(offline){
+  await fieldFetch(location.origin,"/api/offline/session/stop",f.bridgeToken,{method:"POST",body:JSON.stringify({session_id:sessionId||""})});
+  await fieldFetch(location.origin,"/api/session/stop",f.bridgeToken,{method:"POST",body:JSON.stringify({session_id:sessionId||""})});
+  f.active=false;f.offline=false;
+  fieldSetMessage("Offline STOP was acknowledged by the Pi. Laptop CSV is saved locally; Pi mission, events and manifest remain on the Pi until you reconnect to sync them.","good");
+  await fieldRefresh();
+  return;
+ }
+ if(!pair)throw Error("Pi tunnel is unavailable. Select Offline mode if a recent authenticated Pi beacon is visible.");
  await fieldFetch(pair.tunnel_url,"/api/session/stop",pair.control_token,{method:"POST"});
  await fieldFetch(location.origin,"/api/session/stop",f.bridgeToken,{method:"POST",body:JSON.stringify({session_id:f.sessionId||""})});
  f.active=false;
  fieldSetMessage("Both recorders stopped. Retrieving the four session artifacts…","good");
  await fieldRefresh();
- try{
-  await fieldAutoLoadReplay(pair,sessionId||"");
- }catch(syncError){
+ try{await fieldAutoLoadReplay(pair,sessionId||"");}
+ catch(syncError){
   fieldSetMessage("Both recorders stopped, but automatic file sync/replay did not complete: "+syncError.message+". The four files remain on the Pi/laptop; check session IDs and retry from the file comparison section.","error");
   toast("Capture stopped; automatic replay sync failed: "+syncError.message,true);
  }
@@ -344,6 +370,7 @@ function bindFieldSession(){
   try{await fieldStopPaired();}catch(e){fieldSetMessage("Stop not confirmed: "+e.message+". Do not close the laptop receiver until both files are closed.","error");toast("Could not stop both recorders: "+e.message,true);}
   finally{fieldUpdateControls();}
  });
+ $("fieldLinkMode").addEventListener("change",fieldUpdateControls);
  fieldSetMessage("Laptop dashboard bootstrap loaded. Waiting for encrypted LoRa pairing and device readiness.","");
  fieldRefresh();
  setInterval(fieldRefresh,3000);
