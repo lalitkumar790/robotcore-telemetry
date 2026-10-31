@@ -272,20 +272,24 @@ class TunnelPairingAnnouncer(threading.Thread):
             )
             return False
 
-    def _dispatch_control(self, message: dict[str, Any]) -> None:
+    def _dispatch_control(self, message: dict[str, Any], ack_sent: bool = False) -> None:
         """Run session operations off the radio thread so START can pause it."""
         try:
             if self.control_handler is None:
                 raise RuntimeError("Pi field-session controller is not attached.")
             self.control_handler(message)
-            reply = self._control_state.reply(message, "ACK", self._pairing_key)
+            if not ack_sent:
+                reply = self._control_state.reply(message, "ACK", self._pairing_key)
         except Exception as exc:
             self._set(last_error=f"Offline {message.get('kind')} failed: {type(exc).__name__}: {exc}")
+            if ack_sent:
+                return
             try:
                 reply = self._control_state.reply(message, "NACK", self._pairing_key)
             except Exception:
                 return
-        self._control_outbox.put(reply)
+        if not ack_sent:
+            self._control_outbox.put(reply)
 
     def _poll_offline_control(self) -> None:
         with self.lock:
@@ -312,10 +316,27 @@ class TunnelPairingAnnouncer(threading.Thread):
                 if decision != "new":
                     self._set(last_error="Rejected stale/replayed offline control request.")
                     continue
-                threading.Thread(
-                    target=self._dispatch_control, args=(message,), daemon=True,
-                    name="RobotCoreOfflineControl",
-                ).start()
+                if message["kind"] == "START":
+                    # ACK acceptance while this thread still owns the radio;
+                    # controller.start runs separately and performs the handoff.
+                    try:
+                        reply = self._control_state.reply(message, "ACK", key)
+                        outcome, response = radio.transmit(reply, timeout_s=5.0)
+                        if outcome != "confirmed":
+                            self._set(last_error="START acceptance ACK TX was not confirmed: " + response[-200:])
+                            continue
+                    except Exception as exc:
+                        self._set(last_error=f"Could not acknowledge offline START: {exc}")
+                        continue
+                    threading.Thread(
+                        target=self._dispatch_control, args=(message, True), daemon=True,
+                        name="RobotCoreOfflineControl",
+                    ).start()
+                else:
+                    threading.Thread(
+                        target=self._dispatch_control, args=(message, False), daemon=True,
+                        name="RobotCoreOfflineControl",
+                    ).start()
         except Exception as exc:
             self._set(last_error=f"Offline control RX: {type(exc).__name__}: {exc}")
             self._close_radio()
