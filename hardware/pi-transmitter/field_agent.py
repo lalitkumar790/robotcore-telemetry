@@ -159,6 +159,8 @@ class FieldController:
             env["ROBOTCORE_EXPERIMENT_ID"] = experiment_id
             env["ROBOTCORE_SESSION_ID"] = session_id
             env["ROBOTCORE_MISSIONS_DIR"] = str(MISSIONS_PATH)
+            env["ROBOTCORE_DEVICE_ID"] = self.announcer.device_id
+            env["ROBOTCORE_OFFLINE_CONTROL_STATE"] = str(MISSIONS_PATH / ".offline-control.json")
             if IMU_ADDRESS:
                 env["ROBOTCORE_IMU_ADDRESS"] = IMU_ADDRESS
             handle = log_path.open("x", encoding="utf-8", buffering=1)
