@@ -311,7 +311,16 @@ class TunnelPairingAnnouncer(threading.Thread):
                 decision, cached = self._control_state.accept(message)
                 if decision == "duplicate":
                     if cached:
-                        self._control_outbox.put(cached)
+                        outcome, response = radio.transmit(cached, timeout_s=5.0)
+                        if outcome == "confirmed" and message.get("kind") == "START":
+                            # The original ACK or dispatch may have been lost
+                            # during handoff. start() is idempotent for this ID.
+                            threading.Thread(
+                                target=self._dispatch_control, args=(message, True), daemon=True,
+                                name="RobotCoreOfflineControlRetry",
+                            ).start()
+                        elif outcome != "confirmed":
+                            self._set(last_error="Cached offline ACK retry was not confirmed: " + response[-200:])
                     continue
                 if decision != "new":
                     self._set(last_error="Rejected stale/replayed offline control request.")
