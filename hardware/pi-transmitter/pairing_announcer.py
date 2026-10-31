@@ -26,7 +26,7 @@ URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com", re.IGNORECASE)
 class TunnelPairingAnnouncer(threading.Thread):
     """Wait for internet, open a temporary HTTPS tunnel, and announce it over encrypted LoRa."""
 
-    def __init__(self, *, local_port: int = 8766) -> None:
+    def __init__(self, *, local_port: int = 8766, control_state_path: str | Path | None = None) -> None:
         super().__init__(daemon=True, name="RobotCoreTunnelPairingAnnouncer")
         self.local_port = local_port
         self.stop_event = threading.Event()
@@ -48,7 +48,7 @@ class TunnelPairingAnnouncer(threading.Thread):
         self._tunnel_output: queue.Queue[str] = queue.Queue()
         self._reader: threading.Thread | None = None
         self._pairing_key: bytes | None = None
-        state_path = os.getenv("ROBOTCORE_OFFLINE_CONTROL_STATE", str(Path(os.getenv("ROBOTCORE_OFFLINE_CONTROL_STATE", str(Path(MISSIONS_DIR) / ".offline-control.json")))))
+        state_path = control_state_path or os.getenv("ROBOTCORE_OFFLINE_CONTROL_STATE") or str(Path(MISSIONS_DIR) / ".offline-control.json")
         self._control_state = PersistentControlState(state_path)
         self.control_handler = None
         self._control_outbox: queue.Queue[bytes] = queue.Queue()
