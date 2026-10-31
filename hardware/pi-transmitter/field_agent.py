@@ -200,7 +200,14 @@ class FieldController:
             self.last_exit_code = None
             self.last_error = None
             self.state = "starting"
+            threading.Thread(target=self._watch_process, args=(process,), daemon=True, name="RobotCoreMissionSupervisor").start()
             return self.status()
+
+    def _watch_process(self, process: subprocess.Popen) -> None:
+        process.wait()
+        with self.lock:
+            if self.process is process:
+                self._close_log_if_done()
 
     def stop(self) -> dict[str, Any]:
         with self.lock:
