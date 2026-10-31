@@ -26,6 +26,7 @@ import uvicorn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
 from pairing_protocol import load_pairing_key
+from offline_control_protocol import encode_control_message
 from receiver import ReceiverWorker, select_receiver_port, list_ports_text
 
 RADIO_DEFAULTS = {
@@ -102,6 +103,8 @@ def create_app(
     pairing_state: dict[str, Any] = {"descriptor": None, "received_at": None}
     pi_status_state: dict[str, Any] = {"status": None, "received_at": None}
     pairing_lock = threading.RLock()
+    control_state_lock = threading.RLock()
+    control_state_path = Path(log_dir).expanduser().resolve() / "offline_control_state.json"
 
     async def broadcast(message: dict) -> None:
         async with clients_lock:
@@ -174,6 +177,58 @@ def create_app(
         })
         return status
 
+    def next_control_counter() -> int:
+        """Persist the next laptop->Pi counter before putting a command on air."""
+        with control_state_lock:
+            control_state_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                state = json.loads(control_state_path.read_text(encoding="utf-8"))
+                current = int(state.get("counter", 0))
+            except FileNotFoundError:
+                current = 0
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"Offline control counter state is unreadable: {exc}") from exc
+            if current >= 0xFFFFFFFFFFFFFFFF:
+                raise HTTPException(status_code=507, detail="Offline control counter exhausted.")
+            next_value = current + 1
+            temporary = control_state_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps({"counter": next_value}), encoding="utf-8")
+            os.replace(temporary, control_state_path)
+            return next_value
+
+    def send_offline_command(kind: str, experiment_id: str | None = None, session_id: str | None = None) -> dict:
+        if pairing_key is None:
+            raise HTTPException(status_code=503, detail="Pairing key is not configured on this laptop.")
+        with pairing_lock:
+            descriptor = dict(pairing_state["descriptor"] or {})
+            seen = pairing_state["received_at"]
+        if not descriptor or not seen or time.time() - seen > 90:
+            raise HTTPException(status_code=409, detail="No recent authenticated Pi LoRa beacon. Wait for the Pi to announce itself.")
+        device_id = descriptor.get("device_id")
+        if not device_id:
+            raise HTTPException(status_code=409, detail="Authenticated Pi beacon has no device ID.")
+        request_id = secrets.token_hex(12)
+        counter = next_control_counter()
+        message = {
+            "kind": kind, "device_id": device_id, "request_id": request_id,
+            "counter": counter, "session_id": session_id,
+            "experiment_id": experiment_id,
+        }
+        try:
+            packet = encode_control_message(message, pairing_key)
+            worker = worker_holder.get("worker")
+            if worker is None:
+                raise RuntimeError("Laptop receiver worker is not running.")
+            tx = worker.send_control_packet(packet, request_id, timeout_s=10.0)
+            ack = worker.wait_control_ack(request_id, timeout_s=12.0)
+        except TimeoutError as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Offline LoRa command failed: {type(exc).__name__}: {exc}") from exc
+        if ack.get("kind") != "ACK":
+            raise HTTPException(status_code=409, detail={"message": "Pi rejected the offline command.", "ack": ack})
+        return {"ok": True, "command": kind, "device_id": device_id, "request_id": request_id, "counter": counter, "modem_tx": tx.get("modem_tx"), "ack": ack}
+
     async def broadcast_status() -> None:
         await broadcast({"type": "status", "data": get_status()})
 
@@ -239,6 +294,51 @@ def create_app(
     ) -> dict:
         require_control_token(authorization, x_robotcore_token)
         return get_status()
+
+    @app.post("/api/offline/session/start")
+    def offline_start_field_session(
+        body: FieldSessionRequest,
+        authorization: str | None = Header(default=None),
+        x_robotcore_token: str | None = Header(default=None),
+    ) -> dict:
+        require_control_token(authorization, x_robotcore_token)
+        if not FIELD_ID_RE.fullmatch(body.experiment_id) or not FIELD_ID_RE.fullmatch(body.session_id):
+            raise HTTPException(status_code=422, detail="Invalid experiment/session ID.")
+        result = send_offline_command("START", body.experiment_id, body.session_id)
+        worker = worker_holder.get("worker")
+        try:
+            capture = worker.begin_field_session(body.experiment_id, body.session_id)
+        except Exception as exc:
+            # Pi has accepted START; do not hide a local receiver log failure.
+            raise HTTPException(status_code=500, detail=f"Pi ACKed START but laptop capture could not begin: {exc}") from exc
+        return {"control": result, "receiver": capture}
+
+    @app.post("/api/offline/session/stop")
+    def offline_stop_field_session(
+        body: dict | None = Body(default=None),
+        authorization: str | None = Header(default=None),
+        x_robotcore_token: str | None = Header(default=None),
+    ) -> dict:
+        require_control_token(authorization, x_robotcore_token)
+        worker = worker_holder.get("worker")
+        if worker is None:
+            raise HTTPException(status_code=503, detail="Receiver worker is not running.")
+        active = worker.status()
+        session_id = (body or {}).get("session_id") or active.get("field_session_id")
+        if not session_id:
+            raise HTTPException(status_code=409, detail="No field session ID is available for offline STOP.")
+        result = send_offline_command("STOP", active.get("experiment_id") or experiment_id, session_id)
+        return {"control": result, "receiver": worker.end_field_session()}
+
+    @app.post("/api/offline/session/status")
+    def offline_status_field_session(
+        body: dict | None = Body(default=None),
+        authorization: str | None = Header(default=None),
+        x_robotcore_token: str | None = Header(default=None),
+    ) -> dict:
+        require_control_token(authorization, x_robotcore_token)
+        session_id = (body or {}).get("session_id") or "STATUS"
+        return send_offline_command("STATUS", experiment_id, session_id)
 
     @app.post("/api/session/start")
     def start_field_session(
