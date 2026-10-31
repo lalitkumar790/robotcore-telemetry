@@ -166,7 +166,7 @@ def create_app(
             "pairing": {
                 "received": bool(pairing_state["descriptor"] or pi_status_state["status"]),
                 "device_id": (pairing_state["descriptor"] or pi_status_state["status"] or {}).get("device_id"),
-                "last_seen_at": pairing_state["received_at"] or pi_status_state["received_at"],
+                "last_seen_at": max([v for v in (pairing_state["received_at"], pi_status_state["received_at"]) if v is not None], default=None),
             },
             "pi_status_beacon": {
                 "status": dict(pi_status_state["status"] or {}),
