@@ -48,13 +48,15 @@ a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}butto
     <div class="small-note" id="fieldPairMeta">For automatic pairing, open this dashboard from the laptop field-station address (http://laptop-ip:8765), not the public Vercel page. The hosted page remains available for remote review and replay.</div>
   </div>
   <div class="field-console-open">
+    <label for="fieldLinkMode">Session control mode</label>
+    <select id="fieldLinkMode"><option value="auto">Automatic (online if available, otherwise LoRa)</option><option value="offline">Offline · LoRa only</option><option value="online">Online tunnel</option></select>
     <label for="fieldExperimentId">Experiment label</label>
     <input id="fieldExperimentId" type="text" maxlength="80" value="MANIT-20261030-A">
     <div class="actions">
-      <button class="btn" id="fieldStartBtn" disabled>▶ Start paired recording</button>
-      <button class="btn danger" id="fieldStopBtn" disabled>■ Stop & save both files</button>
+      <button class="btn" id="fieldStartBtn" disabled>▶ Start recording</button>
+      <button class="btn danger" id="fieldStopBtn" disabled>■ Stop & save</button>
     </div>
-    <div class="small-note" id="fieldSessionMessage">Start unlocks when the Pi tunnel beacon is fresh, all Pi sensors pass preflight, and the laptop radio is configured.</div>
+    <div class="small-note" id="fieldSessionMessage">Offline mode requires a recent authenticated Pi beacon and configured laptop radio. The Pi performs its own GPS/IMU preflight before recording.</div>
     <div class="small-note" id="fieldSessionIdentity">Session: —</div>
     <div class="small-note" id="fieldSessionFiles">Paired Pi mission + sidecar + manifest + laptop CSV will appear here.</div>
   </div>
