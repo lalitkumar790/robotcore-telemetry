@@ -202,8 +202,11 @@ def create_app(
         with pairing_lock:
             descriptor = dict(pairing_state["descriptor"] or {})
             seen = pairing_state["received_at"]
-        if not descriptor or not seen or time.time() - seen > 90:
-            raise HTTPException(status_code=409, detail="No recent authenticated Pi LoRa beacon. Wait for the Pi to announce itself.")
+        worker = worker_holder.get("worker")
+        rx_status = worker.status() if worker else {}
+        stale = not seen or time.time() - seen > 90
+        if not descriptor or (stale and (kind == "START" or not rx_status.get("capture_active"))):
+            raise HTTPException(status_code=409, detail="No recent authenticated Pi LoRa beacon. Wait for the Pi to announce itself before starting a session.")
         device_id = descriptor.get("device_id")
         if not device_id:
             raise HTTPException(status_code=409, detail="Authenticated Pi beacon has no device ID.")
@@ -219,8 +222,21 @@ def create_app(
             worker = worker_holder.get("worker")
             if worker is None:
                 raise RuntimeError("Laptop receiver worker is not running.")
-            tx = worker.send_control_packet(packet, request_id, timeout_s=10.0)
-            ack = worker.wait_control_ack(request_id, timeout_s=12.0)
+            tx = None
+            ack = None
+            last_timeout = None
+            for attempt in range(3):
+                # Retransmit the exact same ciphertext and request ID. The Pi's
+                # durable replay store returns its cached ACK without re-running
+                # the command when the first ACK was lost.
+                tx = worker.send_control_packet(packet, request_id, timeout_s=10.0)
+                try:
+                    ack = worker.wait_control_ack(request_id, timeout_s=5.0)
+                    break
+                except TimeoutError as exc:
+                    last_timeout = exc
+            if ack is None:
+                raise last_timeout or TimeoutError("No authenticated Pi ACK received.")
         except TimeoutError as exc:
             raise HTTPException(status_code=504, detail=str(exc)) from exc
         except Exception as exc:
