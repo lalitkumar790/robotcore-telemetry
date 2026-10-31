@@ -66,6 +66,11 @@ class LoRaHalfDuplexTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             radio.transmit(b"x" * 251)
 
+    def test_transmit_rejects_non_bytes_payload(self):
+        radio = self.make_radio()
+        with self.assertRaises(ValueError):
+            radio.transmit("not-bytes")
+
     def test_transmit_stops_active_receive_before_sending(self):
         radio = self.make_radio()
         radio._rx_active = True
