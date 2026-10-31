@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from config import RadioConfig
+from config import RadioConfig, MISSIONS_DIR
 from device_discovery import select_serial_port
 from pairing_protocol import encode_pairing_beacon, encode_status_beacon, load_pairing_key
 from offline_control_protocol import OfflineControlError, decode_control_message
@@ -48,7 +48,7 @@ class TunnelPairingAnnouncer(threading.Thread):
         self._tunnel_output: queue.Queue[str] = queue.Queue()
         self._reader: threading.Thread | None = None
         self._pairing_key: bytes | None = None
-        state_path = os.getenv("ROBOTCORE_OFFLINE_CONTROL_STATE", str(Path(os.getenv("ROBOTCORE_MISSIONS_DIR", "missions")) / ".offline-control.json"))
+        state_path = os.getenv("ROBOTCORE_OFFLINE_CONTROL_STATE", str(Path(os.getenv("ROBOTCORE_OFFLINE_CONTROL_STATE", str(Path(MISSIONS_DIR) / ".offline-control.json")))))
         self._control_state = PersistentControlState(state_path)
         self.control_handler = None
         self._control_outbox: queue.Queue[bytes] = queue.Queue()
