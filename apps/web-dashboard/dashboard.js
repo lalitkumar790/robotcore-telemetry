@@ -306,14 +306,14 @@ async function fieldStartPaired(){
  const sessionId="RC-"+new Date().toISOString().replace(/[-:.TZ]/g,"").slice(0,14)+"-"+Math.random().toString(36).slice(2,7).toUpperCase();
  const beaconFresh=!!(receiver.pairing&&receiver.pairing.received&&receiver.pairing.last_seen_at&&Date.now()/1000-receiver.pairing.last_seen_at<90);
  if(!offline){
-  try{
-   if(!pairing.paired)throw Error("Online tunnel pairing is unavailable.");
-   const preflight=await fieldFetch(pairing.tunnel_url,"/api/preflight",pairing.control_token);
-   if(!preflight.ok)throw Error("Pi preflight failed. Check GPS USB, LoRa-E5 TX and WT901BLE68.");
-  }catch(error){
+  if(!pairing.paired)throw Error("Online tunnel pairing is unavailable.");
+  let preflight;
+  try{preflight=await fieldFetch(pairing.tunnel_url,"/api/preflight",pairing.control_token);}
+  catch(error){
    if(mode==="auto"&&beaconFresh)offline=true;
    else throw error;
   }
+  if(!offline&&!preflight.ok)throw Error("Pi preflight failed. Check GPS USB, LoRa-E5 TX and WT901BLE68.");
  }
  if(offline){
   if(!beaconFresh)throw Error("No recent authenticated Pi LoRa beacon. Wait for the Pi beacon before starting offline.");
