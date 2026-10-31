@@ -44,7 +44,7 @@ def encode_control_message(
         raise OfflineControlError("Control message must be an object.")
 
     kind = message.get("kind")
-    if kind not in COMMANDS:
+    if not isinstance(kind, str) or kind not in COMMANDS:
         raise OfflineControlError("Unsupported control message kind.")
     device_id = _identifier(message.get("device_id"), "device_id")
     request_id = _identifier(message.get("request_id"), "request_id")
@@ -84,7 +84,7 @@ def decode_control_message(packet: bytes, key: bytes) -> dict[str, Any]:
         value = json.loads(raw.decode("ascii"))
     except Exception as exc:
         raise OfflineControlError("Control packet authentication or payload validation failed.") from exc
-    if not isinstance(value, dict) or value.get("v") != 1 or value.get("k") not in COMMANDS:
+    if not isinstance(value, dict) or value.get("v") != 1 or not isinstance(value.get("k"), str) or value.get("k") not in COMMANDS:
         raise OfflineControlError("Unsupported offline-control message.")
     result = {
         "kind": value.get("k"),
