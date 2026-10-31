@@ -32,7 +32,7 @@ class PersistentControlState:
             value = json.loads(self.path.read_text(encoding="utf-8"))
             if not isinstance(value, dict):
                 raise ValueError("state root must be an object")
-            self.state.update(value)
+            self.state = {**self.state, **value}
             for field in ("rx_high_water", "tx_counter"):
                 number = self.state.get(field)
                 if isinstance(number, bool) or not isinstance(number, int) or number < 0:
@@ -59,6 +59,7 @@ class PersistentControlState:
     def accept(self, message: dict[str, Any]) -> tuple[str, bytes | None]:
         """Return ('new'|'duplicate'|'rejected', cached_reply_bytes)."""
         with self.lock:
+            self._load()
             request_id = message.get("request_id")
             fingerprint = self._fingerprint(message)
             if request_id == self.state.get("last_request"):
@@ -78,6 +79,7 @@ class PersistentControlState:
 
     def reply(self, request: dict[str, Any], kind: str, key: bytes) -> bytes:
         with self.lock:
+            self._load()
             if request.get("request_id") != self.state.get("last_request"):
                 raise RuntimeError("Cannot reply to a command that is no longer the latest accepted request.")
             self.state["tx_counter"] += 1
