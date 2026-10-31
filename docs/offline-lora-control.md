@@ -30,21 +30,48 @@ request and resulting session state. The in-memory helper alone is not durable.
 
 ## Radio scheduling and integration status
 
-The Pi-side `LoRaE5.receive_window(timeout_s)` primitive now opens a bounded
-`AT+TEST=RXLRPKT` window, captures packet bytes with RSSI/SNR metadata, and
-issues `AT+TEST=STOP` before returning. `LoRaE5.transmit()` also stops an
-active RX window before TX and enforces the 250-byte payload ceiling. These
-operations follow the LoRa-E5 AT command specification, which defines
-RXLRPKT as continuous receive and TEST=STOP as the stop sub-command.
+The Pi pairing announcer now listens in bounded half-duplex windows while idle.
+It accepts authenticated START, STOP, and STATUS commands addressed to its
+device ID. START is acknowledged while the announcer still owns the radio,
+then dispatched on a separate thread so the field controller can safely pause
+the announcer and hand the serial device to the mission runner.
 
-This is a tested radio-driver primitive, not yet an end-to-end control path:
-the Pi runner does not yet poll windows for RCC1 commands, the announcer does
-not yet accept offline START, and the laptop receiver/dashboard do not yet
-schedule downlink commands or await authenticated ACKs. The next integration
-must add explicit receive windows on both radios, stop-and-wait acknowledgements,
-bounded retries, durable replay counters, and safe timeout policy. Do not treat
-modem `TX DONE` as proof of reception.
+During a mission, the Pi runner polls bounded receive windows after local
+sampling/transmission and handles authenticated STOP and STATUS commands.
+STOP is acknowledged before the runner exits; the field-agent supervisor then
+detects process exit and resumes the pairing announcer. Local mission samples
+are written before telemetry TX and remain the source of truth.
 
-The Pi's local mission recorder remains the source of truth. Radio or laptop
-failure must never stop local sampling. Cloudflare pairing remains an optional
-online path and existing RCP1/RCS1 beacons remain backward-compatible.
+The laptop receiver worker remains the sole owner of its serial port. API
+requests enqueue downlink packets; the worker stops RX, transmits, and restores
+RX. Authenticated ACK/NACK packets are correlated by request ID. The bridge
+persists its outbound counter, retries the exact same encrypted packet up to
+five times, and only reports command success after a matching authenticated
+ACK. The Pi persists its receive high-water mark and cached encrypted reply
+under the mission directory so a duplicate retry does not execute a command
+twice. Pi health beacons support offline discovery even when no tunnel exists.
+
+The local dashboard offers Automatic, Offline LoRa-only, and Online tunnel
+session modes. Offline START and STOP use the laptop bridge's authenticated
+control endpoints. Pi mission artifacts remain on the Pi during a fully
+offline run; the receiver CSV remains on the laptop and can be synchronized
+when connectivity is restored.
+
+## Remaining acceptance work
+
+GitHub Actions verifies source compilation, protocol tests, receiver tests,
+and dashboard JavaScript syntax. These are software checks only. Before using
+this for a real field experiment, test both physical LoRa-E5 devices with the
+actual radio configuration and verify:
+- Pi receives START without internet, starts exactly one mission, and produces
+  the RCM, events, and manifest files.
+- Laptop begins its CSV only after a matching authenticated START ACK.
+- STOP is delivered during recording, the Pi flushes and closes its files, and
+  the announcer resumes.
+- Lost ACKs cause an identical-packet retry and do not duplicate a session.
+- Radio loss or laptop failure never stops local Pi sampling.
+- A long session can still be stopped after the original beacon has gone stale.
+
+Do not treat modem TX DONE as proof of remote receipt. A command is successful
+only after its authenticated ACK is received. Do not deploy to the field Pi or
+merge to main until the hardware acceptance checks pass.
