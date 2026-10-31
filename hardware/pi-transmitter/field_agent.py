@@ -240,7 +240,7 @@ class FieldController:
             return self.status()
 
 
-ANNOUNCER = TunnelPairingAnnouncer()
+ANNOUNCER = TunnelPairingAnnouncer(control_state_path=str(MISSIONS_PATH / ".offline-control.json"))
 controller = FieldController(ANNOUNCER)
 
 
