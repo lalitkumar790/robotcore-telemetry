@@ -2,7 +2,6 @@ import sys
 import unittest
 from collections import deque
 from pathlib import Path
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -53,8 +52,7 @@ class LoRaHalfDuplexTests(unittest.TestCase):
 
     def test_receive_window_parses_payload_and_signal_metadata_then_stops(self):
         radio = self.make_radio()
-        with patch("radio.time.monotonic", side_effect=[0.0, 0.0, 0.001, 0.002, 0.02, 0.03]):
-            packets = radio.receive_window(0.01)
+        packets = radio.receive_window(0.01)
         self.assertEqual(len(packets), 1)
         self.assertEqual(packets[0]["payload"], b"ABC")
         self.assertEqual(packets[0]["rssi_dbm"], -91)
