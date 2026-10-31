@@ -165,7 +165,7 @@ def main() -> int:
         if lora is None or control_key is None or control_state is None:
             return False
         try:
-            for item in lora.receive_window(timeout_s=0.45):
+            for item in lora.receive_window(timeout_s=0.8):
                 payload = item.get("payload", b"")
                 if not payload.startswith(b"RCC1"):
                     continue
