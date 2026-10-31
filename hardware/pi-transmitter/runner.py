@@ -184,6 +184,13 @@ def main() -> int:
                     if cached:
                         outcome, response = lora.transmit(cached, timeout_s=5.0)
                         recorder.write_event("offline_control_duplicate_reply", request_id=message["request_id"], tx_outcome=outcome, modem_response=response[-300:])
+                        if (
+                            message.get("kind") == "STOP"
+                            and message.get("session_id") == os.getenv("ROBOTCORE_SESSION_ID")
+                            and outcome == "confirmed"
+                        ):
+                            print("[CONTROL] Retried STOP ACK transmitted; stopping mission cleanly.")
+                            return True
                     continue
                 if decision != "new":
                     recorder.write_event("offline_control_rejected", request_id=message.get("request_id"), reason="stale_or_replayed")
