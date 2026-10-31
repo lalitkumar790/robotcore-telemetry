@@ -202,7 +202,7 @@ def create_app(
         with pairing_lock:
             descriptor = dict(pairing_state["descriptor"] or {})
             pi_status = dict(pi_status_state["status"] or {})
-            seen = pairing_state["received_at"] or pi_status_state["received_at"]
+            seen = max([v for v in (pairing_state["received_at"], pi_status_state["received_at"]) if v is not None], default=None)
         worker = worker_holder.get("worker")
         rx_status = worker.status() if worker else {}
         stale = not seen or time.time() - seen > 90
