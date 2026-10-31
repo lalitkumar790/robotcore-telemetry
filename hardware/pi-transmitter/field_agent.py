@@ -142,7 +142,9 @@ class FieldController:
         with self.lock:
             self._close_log_if_done()
             if self.process is not None and self.process.poll() is None:
-                raise HTTPException(status_code=409, detail="A field session is already running.")
+                if self.session_id == session_id and self.experiment_id == experiment_id:
+                    return self.status()
+                raise HTTPException(status_code=409, detail="A different field session is already running.")
             if not valid_id(experiment_id) or not valid_id(session_id):
                 raise HTTPException(status_code=422, detail="Experiment and session IDs may contain letters, numbers, dots, underscores and dashes only.")
 
@@ -231,6 +233,23 @@ class FieldController:
 
 ANNOUNCER = TunnelPairingAnnouncer()
 controller = FieldController(ANNOUNCER)
+
+
+def handle_offline_control(message: dict[str, Any]) -> dict[str, Any]:
+    kind = message.get("kind")
+    if kind == "START":
+        return controller.start(message["experiment_id"], message["session_id"])
+    if kind == "STOP":
+        with controller.lock:
+            if controller.session_id and message.get("session_id") != controller.session_id:
+                raise HTTPException(status_code=409, detail="STOP session ID does not match the active Pi session.")
+        return controller.stop()
+    if kind == "STATUS":
+        return controller.status()
+    raise HTTPException(status_code=422, detail="Unsupported offline control command.")
+
+
+ANNOUNCER.control_handler = handle_offline_control
 app = FastAPI(title="RobotCore Local Field Console", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
     CORSMiddleware,
