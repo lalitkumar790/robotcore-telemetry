@@ -149,6 +149,7 @@ function fieldUpdateControls(){
  const onlineReady=paired&&piReachable&&receiverReady&&!piRunning&&!rxRecording;
  $("fieldStartBtn").disabled=!(mode==="offline"?offlineReady:mode==="online"?onlineReady:(onlineReady||offlineReady));
  $("fieldStopBtn").disabled=!(piRunning||rxRecording||f.active);
+ $("fieldSyncBtn").disabled=!(f.offlineCompleted&&!f.active&&!!f.pairing&&!!f.sessionId);
 }
 function fieldRender(){
  const f=S.field,rx=f.receiverStatus||{},pi=f.piStatus||{},pair=f.pairing;
@@ -224,7 +225,7 @@ async function fieldRefresh(){
    }
   }else{
    f.piStatus=null;
-   if(!f.active)f.sessionId=null;
+
   }
   fieldRender();
  }catch(e){
@@ -357,8 +358,8 @@ async function fieldStopPaired(){
  if(offline){
   await fieldFetch(location.origin,"/api/offline/session/stop",f.bridgeToken,{method:"POST",body:JSON.stringify({session_id:sessionId||""})});
   await fieldFetch(location.origin,"/api/session/stop",f.bridgeToken,{method:"POST",body:JSON.stringify({session_id:sessionId||""})});
-  f.active=false;f.offline=false;
-  fieldSetMessage("Offline STOP was acknowledged by the Pi. Laptop CSV is saved locally; Pi mission, events and manifest remain on the Pi until you reconnect to sync them.","good");
+  f.active=false;f.offline=false;f.offlineCompleted=true;
+  fieldSetMessage("Offline STOP was acknowledged by the Pi. Laptop CSV is saved locally; Pi mission, events and manifest remain on the Pi. When the tunnel returns, use Sync saved offline session.","good");
   await fieldRefresh();
   return;
  }
@@ -386,6 +387,14 @@ function bindFieldSession(){
   finally{fieldUpdateControls();}
  });
  $("fieldLinkMode").addEventListener("change",fieldUpdateControls);
+ $("fieldSyncBtn").addEventListener("click",async()=>{
+  const f=S.field;
+  if(!f.pairing||!f.sessionId||!f.offlineCompleted)return;
+  $("fieldSyncBtn").disabled=true;
+  try{await fieldAutoLoadReplay(f.pairing,f.sessionId);f.offlineCompleted=false;fieldSetMessage("Offline session synchronized and replay is ready.","good");}
+  catch(error){fieldSetMessage("Offline session is still saved on the Pi/laptop; sync failed: "+error.message,"error");}
+  finally{fieldUpdateControls();}
+ });
  fieldSetMessage("Laptop dashboard bootstrap loaded. Waiting for encrypted LoRa pairing and device readiness.","");
  fieldRefresh();
  setInterval(fieldRefresh,3000);
