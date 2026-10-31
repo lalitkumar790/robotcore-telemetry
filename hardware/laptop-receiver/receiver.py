@@ -4,6 +4,7 @@ import csv
 import os
 import re
 import threading
+import queue
 import time
 import sys
 from datetime import datetime, timezone
@@ -19,6 +20,7 @@ from pairing_protocol import (
     is_pairing_beacon, is_status_beacon,
 )
 from protocol import decode_packet
+from offline_control_protocol import OfflineControlError, decode_control_message
 
 GPS_VID_PID = (0x1A86, 0x7523)
 LORA_VID_PID = (0x10C4, 0xEA60)
@@ -113,6 +115,12 @@ class ReceiverWorker(threading.Thread):
         self.log_path: Path | None = None
         self._pending_rssi: int | None = None
         self._pending_snr: int | None = None
+        self._control_tx_queue: queue.Queue = queue.Queue()
+        self._control_waiters: dict[str, dict] = {}
+        self._control_lock = threading.RLock()
+        self.control_packets_sent = 0
+        self.control_acks_received = 0
+        self.control_last_error: str | None = None
 
     def status(self) -> dict:
         with self.lock:
@@ -140,6 +148,9 @@ class ReceiverWorker(threading.Thread):
                 "last_rssi_dbm": self.last_rssi,
                 "last_snr_db": self.last_snr,
                 "pairing_key_configured": self.pairing_key is not None,
+                "control_packets_sent": self.control_packets_sent,
+                "control_acks_received": self.control_acks_received,
+                "control_last_error": self.control_last_error,
                 "pairing_received": self.pairing_received,
                 "pairing_rejected": self.pairing_rejected,
                 "last_pairing_unix_ms": self.last_pairing_unix_ms,
@@ -202,6 +213,104 @@ class ReceiverWorker(threading.Thread):
             if rx_response and ("ERROR" in rx_response.upper() or "FAIL" in rx_response.upper()):
                 self.last_error = "Could not place LoRa-E5 in RX mode: " + rx_response[-300:]
         self._status_changed()
+
+    def send_control_packet(self, packet: bytes, request_id: str, timeout_s: float = 8.0) -> dict:
+        """Queue a downlink on the receiver thread; never touch COM from an API thread."""
+        if self.pairing_key is None:
+            raise RuntimeError("Pairing key is not configured.")
+        if not isinstance(packet, bytes) or not packet or len(packet) > 250:
+            raise ValueError("Control packet must contain 1-250 bytes.")
+        waiter = {"event": threading.Event(), "ack": None, "error": None}
+        with self._control_lock:
+            if request_id in self._control_waiters:
+                raise RuntimeError("A control request with this ID is already pending.")
+            self._control_waiters[request_id] = waiter
+        done = threading.Event()
+        item = {"packet": packet, "done": done, "result": None, "error": None}
+        self._control_tx_queue.put(item)
+        if not done.wait(timeout_s):
+            with self._control_lock:
+                self._control_waiters.pop(request_id, None)
+            raise TimeoutError("Timed out waiting for laptop radio TX worker.")
+        if item["error"]:
+            with self._control_lock:
+                self._control_waiters.pop(request_id, None)
+            raise RuntimeError(item["error"])
+        return {"modem_tx": item["result"], "request_id": request_id, "ack_pending": True}
+
+    def wait_control_ack(self, request_id: str, timeout_s: float = 8.0) -> dict:
+        with self._control_lock:
+            waiter = self._control_waiters.get(request_id)
+        if waiter is None:
+            raise RuntimeError("No pending control request with this ID.")
+        if not waiter["event"].wait(timeout_s):
+            with self._control_lock:
+                self._control_waiters.pop(request_id, None)
+            raise TimeoutError("No authenticated LoRa ACK received before timeout; modem TX DONE is not delivery confirmation.")
+        with self._control_lock:
+            self._control_waiters.pop(request_id, None)
+        if waiter["error"]:
+            raise RuntimeError(waiter["error"])
+        return dict(waiter["ack"] or {})
+
+    def _service_control_tx(self) -> None:
+        try:
+            item = self._control_tx_queue.get_nowait()
+        except queue.Empty:
+            return
+        try:
+            stopped = self._command("AT+TEST=STOP", timeout_s=1.0, stop_markers=("+TEST: STOP", "OK"))
+            if "ERROR" in stopped.upper() or "FAIL" in stopped.upper():
+                raise RuntimeError("Could not stop RX before downlink: " + stopped[-200:])
+            response = self._command(
+                'AT+TEST=TXLRPKT,"' + item["packet"].hex().upper() + '"',
+                timeout_s=5.0, stop_markers=("TX DONE", "TX ERROR", "ERROR", "FAIL"),
+            )
+            upper = response.upper()
+            if "TX DONE" not in upper:
+                raise RuntimeError("LoRa modem did not report TX DONE: " + response[-200:])
+            with self.lock:
+                self.control_packets_sent += 1
+                self.control_last_error = None
+            item["result"] = response
+        except Exception as exc:
+            item["error"] = f"{type(exc).__name__}: {exc}"
+            with self.lock:
+                self.control_last_error = item["error"]
+        finally:
+            try:
+                resumed = self._command("AT+TEST=RXLRPKT", timeout_s=1.2, stop_markers=("+TEST: RXLRPKT", "OK"))
+                if "ERROR" in resumed.upper() or "FAIL" in resumed.upper():
+                    raise RuntimeError("Could not restore receiver mode: " + resumed[-200:])
+            except Exception as exc:
+                with self.lock:
+                    self.control_last_error = f"RX restore failed: {exc}"
+                item["error"] = item["error"] or self.control_last_error
+            item["done"].set()
+            self._status_changed()
+
+    def _process_control_packet(self, payload: bytes) -> bool:
+        if not payload.startswith(b"RCC1"):
+            return False
+        if self.pairing_key is None:
+            return True
+        try:
+            message = decode_control_message(payload, self.pairing_key)
+            if message["kind"] not in {"ACK", "NACK"}:
+                return True
+            with self._control_lock:
+                waiter = self._control_waiters.get(message["request_id"])
+                if waiter is not None:
+                    waiter["ack"] = message
+                    waiter["event"].set()
+            with self.lock:
+                self.control_acks_received += 1
+                self.control_last_error = None if message["kind"] == "ACK" else "Pi rejected command: " + str(message.get("experiment_id") or "NACK")
+        except OfflineControlError as exc:
+            with self.lock:
+                self.control_last_error = "Rejected unauthenticated control response: " + str(exc)
+        self._status_changed()
+        return True
 
     def _prepare_log(self) -> None:
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -366,6 +475,8 @@ class ReceiverWorker(threading.Thread):
         # Consume them exactly once so a malformed/absent metadata line cannot reuse stale values.
         rssi, snr = self._pending_rssi, self._pending_snr
         self._pending_rssi, self._pending_snr = None, None
+        if self._process_control_packet(payload):
+            return
         if is_pairing_beacon(payload):
             self._process_pairing_beacon(payload, rssi, snr, now_ms)
             return
@@ -477,6 +588,7 @@ class ReceiverWorker(threading.Thread):
                 self._status_changed()
                 self._configure_radio()
                 while not self.stop_event.is_set():
+                    self._service_control_tx()
                     raw = self.serial_port.readline()
                     if not raw:
                         continue
