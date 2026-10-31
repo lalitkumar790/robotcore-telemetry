@@ -226,13 +226,13 @@ def create_app(
             tx = None
             ack = None
             last_timeout = None
-            for attempt in range(3):
+            for attempt in range(5):
                 # Retransmit the exact same ciphertext and request ID. The Pi's
                 # durable replay store returns its cached ACK without re-running
                 # the command when the first ACK was lost.
                 tx = worker.send_control_packet(packet, request_id, timeout_s=10.0)
                 try:
-                    ack = worker.wait_control_ack(request_id, timeout_s=5.0)
+                    ack = worker.wait_control_ack(request_id, timeout_s=3.0)
                     break
                 except TimeoutError as exc:
                     last_timeout = exc
