@@ -52,8 +52,14 @@ class OfflineControlProtocolTests(unittest.TestCase):
                 "counter": 2, "session_id": "session-001"}
         status = {"kind": "STATUS", "device_id": "pi-field-01", "request_id": "req-3",
                   "counter": 3}
-        self.assertEqual(decode_control_message(encode_control_message(stop, self.key), self.key), stop)
-        self.assertEqual(decode_control_message(encode_control_message(status, self.key), self.key), status)
+        decoded_stop = decode_control_message(encode_control_message(stop, self.key), self.key)
+        self.assertEqual(decoded_stop["kind"], "STOP")
+        self.assertEqual(decoded_stop["session_id"], "session-001")
+        self.assertIsNone(decoded_stop["experiment_id"])
+        decoded_status = decode_control_message(encode_control_message(status, self.key), self.key)
+        self.assertEqual(decoded_status["kind"], "STATUS")
+        self.assertIsNone(decoded_status["session_id"])
+        self.assertIsNone(decoded_status["experiment_id"])
 
     def test_retries_are_idempotent_and_replays_rejected(self):
         guard = ControlReplayGuard()
